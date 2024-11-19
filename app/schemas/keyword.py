@@ -47,7 +47,14 @@ class Competitor(BaseModel):
     class Config:
         from_attributes = True
 
-class AnalysisDetail(AnalysisBrief):
+class AnalysisDetail(BaseModel):
+    id: int
+    seed_keyword: str
+    status: str
+    total_search_volume: int
+    seed_search_volume: int
+    seed_search_ratio: float
+    created_at: datetime
     cooccurrence_keywords: List[Cooccurrence]
     search_volumes: List[SearchVolume]
     competitors: List[Competitor]

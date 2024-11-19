@@ -8,12 +8,12 @@ class SeedKeywordAnalysis(Base):
 
     id = Column(BigInteger, primary_key=True, index=True)
     seed_keyword = Column(String(100), nullable=False, index=True)
-    status = Column(String(20), nullable=False, default="pending", index=True)
+    status = Column(String(20), nullable=False, default="pending")
     error_message = Column(Text, nullable=True)
     total_search_volume = Column(BigInteger, nullable=False)
     seed_search_volume = Column(BigInteger, nullable=False)
     seed_search_ratio = Column(DECIMAL(10,4), nullable=False)
-    created_at = Column(TIMESTAMP, server_default=func.now())
+    created_at = Column(TIMESTAMP, nullable=False, default=func.current_timestamp())
 
     # 添加关系
     cooccurrence_keywords = relationship("CooccurrenceKeyword", back_populates="analysis")

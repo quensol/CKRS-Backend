@@ -53,6 +53,7 @@ def get_analysis(db: Session, analysis_id: int) -> Optional[dict]:
     result = {
         "id": analysis.id,
         "seed_keyword": analysis.seed_keyword,
+        "status": analysis.status,
         "total_search_volume": analysis.total_search_volume,
         "seed_search_volume": analysis.seed_search_volume,
         "seed_search_ratio": float(analysis.seed_search_ratio),
