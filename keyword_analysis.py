@@ -7,6 +7,7 @@ import threading
 from queue import Queue
 import sys
 import mysql.connector
+import asyncio
 
 # 全局变量
 print_queue = Queue()
@@ -20,6 +21,7 @@ class KeywordAnalyzer:
         self.df = None
         self.seed_queries = None
         self.result_dir = 'result'
+        self.progress_callback = None
         
         # 创建结果目录
         if not os.path.exists(self.result_dir):
@@ -76,6 +78,21 @@ class KeywordAnalyzer:
         indices = self.keyword_index.get(keyword, [])
         return self.df.index.isin(indices)
 
+    def set_progress_callback(self, callback):
+        """设置进度回调函数"""
+        self.progress_callback = callback
+
+    async def report_progress(self, stage: str, percent: int, message: str, details: dict = None):
+        """报告进度"""
+        if self.progress_callback:
+            progress_data = {
+                "stage": stage,
+                "percent": percent,
+                "message": message,
+                "details": details or {}
+            }
+            await self.progress_callback(progress_data)
+
     def find_related_keywords(self):
         """查找中介关键词"""
         self._safe_print('开始查找中介关键词...')
@@ -86,12 +103,27 @@ class KeywordAnalyzer:
         
         # 统计共现词
         cooccurrence = defaultdict(int)
-        for _, row in tqdm(seed_queries.iterrows(), desc='统计共现词'):
+        total_queries = len(seed_queries)
+        for idx, (_, row) in enumerate(seed_queries.iterrows()):
             words = row['words']
             count = row['Count']
             for word in words:
                 if word != self.seed_keyword:
                     cooccurrence[word] += count
+            
+            # 报告进度
+            if idx % 100 == 0:  # 每处理100条记录报告一次进度
+                percent = int((idx + 1) / total_queries * 100)
+                asyncio.run(self.report_progress(
+                    "analyzing_cooccurrence",
+                    percent,
+                    f"正在分析共现词 ({idx + 1}/{total_queries})",
+                    {
+                        "current": idx + 1,
+                        "total": total_queries,
+                        "found_words": len(cooccurrence)
+                    }
+                ))
         
         # 排序并保存结果
         sorted_words = sorted(cooccurrence.items(), key=lambda x: x[1], reverse=True)
@@ -198,7 +230,7 @@ class KeywordAnalyzer:
             related_volumes[related_keyword] = self.df[mask]['Count'].sum()
         
         # 批量处理中介关键词，不再检查权重阈值
-        for related_keyword, both_volume in tqdm(related_keywords, desc='计算搜索量'):
+        for idx, (related_keyword, both_volume) in enumerate(related_keywords):
             related_volume = related_volumes[related_keyword]
             weight = round(both_volume / self.seed_volume * 100, 4) if self.seed_volume > 0 else 0
             
@@ -209,6 +241,20 @@ class KeywordAnalyzer:
                 '共现比例': round(both_volume / related_volume * 100, 2) if related_volume > 0 else 0,
                 '权重': weight
             })
+            
+            # 报告进度
+            if idx % 10 == 0:  # 每处理10个词报告一次进度
+                percent = int((idx + 1) / len(related_keywords) * 100)
+                asyncio.run(self.report_progress(
+                    "calculating_volume",
+                    percent,
+                    f"正在计算搜索量 ({idx + 1}/{len(related_keywords)})",
+                    {
+                        "current": idx + 1,
+                        "total": len(related_keywords),
+                        "processed_words": len(results)
+                    }
+                ))
         
         if not results:
             self._safe_print('未找到符合条件的中介关键词')
@@ -294,7 +340,8 @@ class KeywordAnalyzer:
             mediator_indices[mediator_keyword] = set(self.keyword_index[mediator_keyword])
         
         all_competitors = []
-        for _, row in tqdm(mediator_df.iterrows(), desc='分析竞争词'):
+        total_mediators = len(mediator_df)
+        for idx, (_, row) in enumerate(mediator_df.iterrows()):
             mediator_keyword = row['中介关键词']
             mediator_weight = row['权重']
             
@@ -340,6 +387,20 @@ class KeywordAnalyzer:
                     '基础竞争度': round(base_competition_score * 100, 4),
                     '加权竞争度': round(weighted_competition_score * 100, 4)
                 })
+            
+            # 报告进度
+            if idx % 5 == 0:  # 每处理5个中介词报告一次进度
+                percent = int((idx + 1) / total_mediators * 100)
+                asyncio.run(self.report_progress(
+                    "analyzing_competitors",
+                    percent,
+                    f"正在分析竞争关键词 ({idx + 1}/{total_mediators})",
+                    {
+                        "current": idx + 1,
+                        "total": total_mediators,
+                        "found_competitors": len(all_competitors)
+                    }
+                ))
         
         self._save_competitor_results(all_competitors)
 

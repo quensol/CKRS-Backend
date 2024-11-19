@@ -8,6 +8,8 @@ from app.core.logger import logger
 import pandas as pd
 import os
 import numpy as np
+from app.api.v1.endpoints.websocket import manager
+import asyncio
 
 def convert_numpy_int64(value):
     """转换numpy.int64为Python原生int类型"""
@@ -17,7 +19,7 @@ def convert_numpy_int64(value):
         return float(value)
     return value
 
-def run_analysis(keyword: str, analysis_id: int):
+async def run_analysis(keyword: str, analysis_id: int):
     """运行关键词分析并保存结果"""
     db_conn = None
     try:
@@ -40,10 +42,37 @@ def run_analysis(keyword: str, analysis_id: int):
         """, (analysis_id,))
         db_conn.commit()
         
-        # 运行分析
-        logger.info(f"Starting analysis for keyword: {keyword}")
+        # 创建分析器实例
         analyzer = KeywordAnalyzer(keyword)
+        
+        # 设置进度回调
+        async def progress_callback(data: dict):
+            await manager.send_progress(analysis_id, data)
+        
+        analyzer.set_progress_callback(progress_callback)
+        
+        # 报告初始化进度
+        await progress_callback({
+            "stage": "initializing",
+            "percent": 0,
+            "message": "正在初始化分析...",
+            "details": {"keyword": keyword}
+        })
+        
+        # 运行分析
         analyzer.run()
+        
+        # 报告完成进度
+        await progress_callback({
+            "stage": "completed",
+            "percent": 100,
+            "message": "分析完成",
+            "details": {
+                "keyword": keyword,
+                "total_volume": analyzer.df["Count"].sum(),
+                "seed_volume": analyzer.seed_volume
+            }
+        })
         
         try:
             # 更新分析结果和状态
