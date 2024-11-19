@@ -1,0 +1,154 @@
+关键词分析API项目说明
+==================
+
+1. 项目概述
+------------------
+- 项目名称：关键词分析API
+- 目的：提供关键词分析服务的RESTful API
+- 主要功能：分析关键词的共现词、搜索量和竞争关系
+
+2. 数据结构
+------------------
+2.1 核心数据表
+- seed_keyword_analysis: 种子关键词分析记录
+  - id: 主键
+  - seed_keyword: 种子关键词
+  - total_search_volume: 总搜索量
+  - seed_search_volume: 种子关键词搜索量
+  - seed_search_ratio: 搜索占比
+  - created_at: 创建时间
+
+- cooccurrence_keywords: 共现关键词数据
+  - id: 主键
+  - seed_analysis_id: 关联的分析ID
+  - keyword: 共现关键词
+  - cooccurrence_count: 共现次数
+  - created_at: 创建时间
+
+- search_volume_analysis: 搜索量分析结果
+  - id: 主键
+  - seed_analysis_id: 关联的分析ID
+  - mediator_keyword: 中介关键词
+  - cooccurrence_volume: 共现搜索量
+  - mediator_total_volume: 中介词总搜索量
+  - cooccurrence_ratio: 共现比例
+  - weight: 权重
+  - created_at: 创建时间
+
+- competitor_keywords: 竞争关键词数据
+  - id: 主键
+  - seed_analysis_id: 关联的分析ID
+  - competitor_keyword: 竞争关键词
+  - mediator_keywords: 关联的中介关键词
+  - cooccurrence_volume: 共现搜索量
+  - base_competition_score: 基础竞争度
+  - weighted_competition_score: 加权竞争度
+  - created_at: 创建时间
+
+3. API端点设计
+------------------
+3.1 基础端点
+POST /api/v1/keyword/analyze
+- 功能：启动新的关键词分析
+- 参数：
+  - keyword (string): 要分析的关键词
+- 返回：
+  - id: 分析ID
+  - seed_keyword: 种子关键词
+  - total_search_volume: 总搜索量
+  - seed_search_volume: 种子搜索量
+  - seed_search_ratio: 搜索占比
+  - created_at: 创建时间
+
+GET /api/v1/keyword/analysis/{analysis_id}
+- 功能：获取完整的分析结果
+- 参数：
+  - analysis_id (int): 分析ID
+- 返回：完整的分析结果，包括：
+  - 基本信息
+  - 共现关键词列表
+  - 搜索量分析结果
+  - 竞争关键词列表
+
+3.2 详细数据端点
+GET /api/v1/keyword/competitors/{analysis_id}
+- 功能：获取竞争关键词列表
+- 参数：
+  - analysis_id (int): 分析ID
+  - limit (int, 可选): 返回数量，默认30
+- 返回：竞争关键词列表，按加权竞争度排序
+
+GET /api/v1/keyword/cooccurrence/{analysis_id}
+- 功能：获取共现关键词列表
+- 参数：
+  - analysis_id (int): 分析ID
+- 返回：共现关键词列表，按共现次数排序
+
+GET /api/v1/keyword/search-volume/{analysis_id}
+- 功能：获取搜索量分析结果
+- 参数：
+  - analysis_id (int): 分析ID
+- 返回：搜索量分析结果，按权重排序
+
+GET /api/v1/keyword/history
+- 功能：获取分析历史记录
+- 参数：
+  - skip (int, 可选): 跳过记录数，默认0
+  - limit (int, 可选): 返回记录数，默认10
+  - keyword (string, 可选): 按关键词筛选
+- 返回：分析历史记录列表
+
+4. 关键业务逻辑
+------------------
+4.1 分析流程
+1. 加载数据：读取查询日志数据
+2. 查找中介关键词：分析共现词
+3. 计算搜索量：计算各指标
+4. 分析竞争关键词：计算竞争度
+5. 保存结果到数据库
+
+4.2 重要计算公式
+- 权重 = (共现搜索量/种子关键词搜索量) * 100%
+- 基础竞争度 = 竞争词与中介词的共现量 / (中介词总量 - 种子词与中介词共现量)
+- 加权竞争度 = 基础竞争度 * 中介词权重
+
+5. 技术栈
+------------------
+- FastAPI: Web框架
+- SQLAlchemy: ORM
+- MySQL: 数据库
+- Pydantic: 数据验证
+- pandas: 数据处理
+- threading: 多线程支持
+
+6. 部署说明
+------------------
+6.1 环境要求
+- Python 3.8+
+- MySQL 5.7+
+- 足够的磁盘空间存储分析结果
+
+6.2 安装步骤
+1. 克隆代码库
+2. 安装依赖: pip install -r requirements.txt
+3. 配置环境变量: 复制.env.example为.env并修改
+4. 创建数据库: 执行schema.sql
+5. 启动服务: python run.py
+
+7. 注意事项
+------------------
+- 需要处理大量数据时的性能优化
+- 异步处理长时间运行的分析任务
+- 适当的错误处理和日志记录
+- 数据库连接池管理
+- API速率限制考虑
+- 结果缓存策略
+
+8. 待优化项
+------------------
+- 分析任务队列管理
+- 结果缓存机制
+- 并发分析控制
+- API文档自动生成
+- 用户认证授权
+- 数据导出功能 
