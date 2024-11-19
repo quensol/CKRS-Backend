@@ -98,6 +98,70 @@ GET /api/v1/keyword/history
   - keyword (string, 可选): 按关键词筛选
 - 返回：分析历史记录列表
 
+3.3 WebSocket端点
+------------------
+WS /api/v1/keyword/ws/analysis/{analysis_id}
+- 功能：获取实时分析进度
+- 参数：
+  - analysis_id (int): 分析ID
+- 返回：JSON格式的进度信息
+  {
+    "stage": "阶段名称",
+    "percent": "完成百分比",
+    "message": "进度消息",
+    "details": {
+      // 阶段特定的详细信息
+    }
+  }
+
+- 进度阶段说明：
+  1. initializing: 初始化
+     - details: { "keyword": "分析关键词" }
+  
+  2. analyzing_cooccurrence: 分析共现词
+     - details: {
+         "current": "当前处理数",
+         "total": "总数",
+         "found_words": "已发现关键词数"
+       }
+  
+  3. calculating_volume: 计算搜索量
+     - details: {
+         "current": "当前处理数",
+         "total": "总数",
+         "processed_words": "已处理词数"
+       }
+  
+  4. analyzing_competitors: 分析竞争关键词
+     - details: {
+         "current": "当前处理数",
+         "total": "总数",
+         "found_competitors": "已发现竞争词数"
+       }
+  
+  5. completed: 分析完成
+     - details: {
+         "keyword": "分析关键词",
+         "total_volume": "总搜索量",
+         "seed_volume": "种子关键词搜索量"
+       }
+  
+  6. error: 发生错误
+     - details: { "error": "错误信息" }
+
+- 使用示例：
+  ```javascript
+  const ws = new WebSocket(`ws://localhost:8000/api/v1/keyword/ws/analysis/${analysisId}`);
+  
+  ws.onmessage = function(event) {
+    const progress = JSON.parse(event.data);
+    console.log(`当前阶段: ${progress.stage}`);
+    console.log(`完成进度: ${progress.percent}%`);
+    console.log(`状态信息: ${progress.message}`);
+    console.log('详细信息:', progress.details);
+  };
+  ```
+
 4. 关键业务逻辑
 ------------------
 4.1 分析流程
@@ -143,6 +207,11 @@ GET /api/v1/keyword/history
 - 数据库连接池管理
 - API速率限制考虑
 - 结果缓存策略
+- WebSocket连接管理
+  - 及时清理断开的连接
+  - 处理连接异常
+  - 考虑重连机制
+  - 限制单个分析的连接数
 
 8. 待优化项
 ------------------
@@ -151,4 +220,10 @@ GET /api/v1/keyword/history
 - 并发分析控制
 - API文档自动生成
 - 用户认证授权
-- 数据导出功能 
+- 数据导出功能
+- WebSocket相关优化
+  - 添加心跳机制
+  - 实现断线重连
+  - 支持批量进度推送
+  - 添加连接认证
+  - 优化连接池管理

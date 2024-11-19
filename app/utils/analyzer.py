@@ -60,7 +60,7 @@ async def run_analysis(keyword: str, analysis_id: int):
         })
         
         # 运行分析
-        analyzer.run()
+        await analyzer.run()
         
         # 报告完成进度
         await progress_callback({

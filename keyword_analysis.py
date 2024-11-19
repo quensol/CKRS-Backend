@@ -93,7 +93,7 @@ class KeywordAnalyzer:
             }
             await self.progress_callback(progress_data)
 
-    def find_related_keywords(self):
+    async def find_related_keywords(self):
         """查找中介关键词"""
         self._safe_print('开始查找中介关键词...')
         
@@ -114,7 +114,7 @@ class KeywordAnalyzer:
             # 报告进度
             if idx % 100 == 0:  # 每处理100条记录报告一次进度
                 percent = int((idx + 1) / total_queries * 100)
-                asyncio.run(self.report_progress(
+                await self.report_progress(
                     "analyzing_cooccurrence",
                     percent,
                     f"正在分析共现词 ({idx + 1}/{total_queries})",
@@ -123,7 +123,7 @@ class KeywordAnalyzer:
                         "total": total_queries,
                         "found_words": len(cooccurrence)
                     }
-                ))
+                )
         
         # 排序并保存结果
         sorted_words = sorted(cooccurrence.items(), key=lambda x: x[1], reverse=True)
@@ -140,7 +140,7 @@ class KeywordAnalyzer:
         
         return sorted_words
 
-    def calculate_search_volume(self, related_words):
+    async def calculate_search_volume(self, related_words):
         """计算搜索量"""
         self._safe_print('开始计算搜索量...')
         
@@ -245,7 +245,7 @@ class KeywordAnalyzer:
             # 报告进度
             if idx % 10 == 0:  # 每处理10个词报告一次进度
                 percent = int((idx + 1) / len(related_keywords) * 100)
-                asyncio.run(self.report_progress(
+                await self.report_progress(
                     "calculating_volume",
                     percent,
                     f"正在计算搜索量 ({idx + 1}/{len(related_keywords)})",
@@ -254,7 +254,7 @@ class KeywordAnalyzer:
                         "total": len(related_keywords),
                         "processed_words": len(results)
                     }
-                ))
+                )
         
         if not results:
             self._safe_print('未找到符合条件的中介关键词')
@@ -267,7 +267,7 @@ class KeywordAnalyzer:
         self._save_search_volume_results(output_file, results_df)
         return results_df
 
-    def find_competitors(self, mediator_df):
+    async def find_competitors(self, mediator_df):
         """分析竞争关键词"""
         if mediator_df.empty:
             self._safe_print('没有有效的中介关键词，跳过竞争关键词分析')
@@ -391,7 +391,7 @@ class KeywordAnalyzer:
             # 报告进度
             if idx % 5 == 0:  # 每处理5个中介词报告一次进度
                 percent = int((idx + 1) / total_mediators * 100)
-                asyncio.run(self.report_progress(
+                await self.report_progress(
                     "analyzing_competitors",
                     percent,
                     f"正在分析竞争关键词 ({idx + 1}/{total_mediators})",
@@ -400,7 +400,7 @@ class KeywordAnalyzer:
                         "total": total_mediators,
                         "found_competitors": len(all_competitors)
                     }
-                ))
+                )
         
         self._save_competitor_results(all_competitors)
 
@@ -524,20 +524,20 @@ class KeywordAnalyzer:
         finally:
             cursor.close()
 
-    def run(self):
+    async def run(self):
         """运行完整分析流程"""
         try:
             # 1. 加载数据
             self.load_data()
             
             # 2. 查找中介关键词
-            related_words = self.find_related_keywords()
+            related_words = await self.find_related_keywords()
             
             # 3. 计算搜索量
-            mediator_df = self.calculate_search_volume(related_words)
+            mediator_df = await self.calculate_search_volume(related_words)
             
             # 4. 分析竞争关键词
-            self.find_competitors(mediator_df)
+            await self.find_competitors(mediator_df)
             
             self._safe_print('\n分析完成！所有结果已保存在result目录下')
             
@@ -559,7 +559,7 @@ def main():
         return
         
     analyzer = KeywordAnalyzer(seed_keyword)
-    analyzer.run()
+    asyncio.run(analyzer.run())
 
 if __name__ == '__main__':
     main() 
