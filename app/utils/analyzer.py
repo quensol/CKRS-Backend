@@ -32,20 +32,29 @@ def run_analysis(keyword: str, analysis_id: int):
         db_conn = mysql.connector.connect(**db_config)
         cursor = db_conn.cursor()
         
+        # 更新状态为处理中
+        cursor.execute("""
+            UPDATE seed_keyword_analysis 
+            SET status = 'processing'
+            WHERE id = %s
+        """, (analysis_id,))
+        db_conn.commit()
+        
         # 运行分析
         logger.info(f"Starting analysis for keyword: {keyword}")
         analyzer = KeywordAnalyzer(keyword)
         analyzer.run()
         
         try:
-            # 1. 更新种子关键词分析记录
+            # 更新分析结果和状态
             total_volume = convert_numpy_int64(analyzer.df["Count"].sum())
             seed_volume = convert_numpy_int64(analyzer.seed_volume)
             seed_ratio = round(seed_volume/total_volume*100, 2)
             
             cursor.execute("""
                 UPDATE seed_keyword_analysis 
-                SET total_search_volume = %s,
+                SET status = 'completed',
+                    total_search_volume = %s,
                     seed_search_volume = %s,
                     seed_search_ratio = %s
                 WHERE id = %s
@@ -110,11 +119,28 @@ def run_analysis(keyword: str, analysis_id: int):
             
         except Exception as e:
             db_conn.rollback()
+            # 更新失败状态和错误信息
+            cursor.execute("""
+                UPDATE seed_keyword_analysis 
+                SET status = 'failed',
+                    error_message = %s
+                WHERE id = %s
+            """, (str(e), analysis_id))
+            db_conn.commit()
             logger.error(f"Error saving to database: {str(e)}")
             raise
             
     except Exception as e:
         logger.error(f"Analysis failed: {str(e)}")
+        if db_conn and db_conn.is_connected():
+            cursor = db_conn.cursor()
+            cursor.execute("""
+                UPDATE seed_keyword_analysis 
+                SET status = 'failed',
+                    error_message = %s
+                WHERE id = %s
+            """, (str(e), analysis_id))
+            db_conn.commit()
         raise
     finally:
         if db_conn and db_conn.is_connected():

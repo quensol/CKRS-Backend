@@ -10,6 +10,8 @@ class AnalysisCreate(AnalysisBase):
 
 class AnalysisBrief(AnalysisBase):
     id: int
+    status: str
+    error_message: Optional[str] = None
     total_search_volume: int
     seed_search_volume: int
     seed_search_ratio: float

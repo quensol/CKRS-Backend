@@ -57,4 +57,11 @@ CREATE TABLE competitor_keywords (
     INDEX idx_seed_analysis_id (seed_analysis_id),
     INDEX idx_competitor_keyword (competitor_keyword),
     INDEX idx_weighted_score (weighted_competition_score)
-) COMMENT='竞争关键词表'; 
+) COMMENT='竞争关键词表';
+
+-- 修改种子关键词分析记录表，添加状态字段
+ALTER TABLE seed_keyword_analysis 
+ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'pending' 
+COMMENT '分析状态: pending/processing/completed/failed' AFTER seed_keyword,
+ADD COLUMN error_message TEXT NULL COMMENT '错误信息' AFTER status,
+ADD INDEX idx_status (status); 

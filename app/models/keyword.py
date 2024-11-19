@@ -8,6 +8,8 @@ class SeedKeywordAnalysis(Base):
 
     id = Column(BigInteger, primary_key=True, index=True)
     seed_keyword = Column(String(100), nullable=False, index=True)
+    status = Column(String(20), nullable=False, default="pending", index=True)
+    error_message = Column(Text, nullable=True)
     total_search_volume = Column(BigInteger, nullable=False)
     seed_search_volume = Column(BigInteger, nullable=False)
     seed_search_ratio = Column(DECIMAL(10,4), nullable=False)

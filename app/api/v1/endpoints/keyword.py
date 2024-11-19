@@ -31,9 +31,28 @@ async def analyze_keyword(
 ):
     """启动新的关键词分析"""
     try:
-        # 创建初始分析记录
+        # 检查是否存在已完成的分析
+        existing_analysis = db.query(models.SeedKeywordAnalysis).filter(
+            models.SeedKeywordAnalysis.seed_keyword == keyword,
+            models.SeedKeywordAnalysis.status == "completed"
+        ).first()
+        
+        if existing_analysis:
+            return existing_analysis
+            
+        # 检查是否存在正在处理的分析
+        processing_analysis = db.query(models.SeedKeywordAnalysis).filter(
+            models.SeedKeywordAnalysis.seed_keyword == keyword,
+            models.SeedKeywordAnalysis.status.in_(["pending", "processing"])
+        ).first()
+        
+        if processing_analysis:
+            return processing_analysis
+        
+        # 创建新的分析记录
         analysis_result = {
             "seed_keyword": keyword,
+            "status": "pending",
             "total_search_volume": 0,
             "seed_search_volume": 0,
             "seed_search_ratio": 0
