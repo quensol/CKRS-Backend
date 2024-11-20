@@ -38,6 +38,8 @@
         let ws = null;
         let reconnectAttempts = 0;
         const maxReconnectAttempts = 5;
+        let lastHeartbeat = Date.now();
+        const heartbeatTimeout = 35000; // 35秒超时(比服务器心跳间隔长)
 
         function connect() {
             const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -48,22 +50,27 @@
             
             ws = new WebSocket(wsUrl);
             
-            ws.binaryType = 'blob';
-            
             ws.onopen = function() {
                 console.log('WebSocket连接成功');
                 document.getElementById('status').textContent = '已连接';
                 reconnectAttempts = 0;
+                lastHeartbeat = Date.now();
+                
+                // 启动心跳检查
+                startHeartbeatCheck();
             };
             
             ws.onmessage = function(event) {
                 const data = JSON.parse(event.data);
-                console.log('收到消息:', data);
                 
-                document.getElementById('progressBar').style.width = `${data.percent}%`;
-                document.getElementById('status').textContent = data.message;
-                document.getElementById('details').textContent = 
-                    `阶段: ${data.stage}\n详细信息: ${JSON.stringify(data.details)}`;
+                if (data.type === 'heartbeat') {
+                    lastHeartbeat = Date.now();
+                    return;
+                }
+                
+                if (data.type === 'progress') {
+                    updateProgress(data);
+                }
             };
             
             ws.onerror = function(error) {
@@ -83,6 +90,37 @@
             };
         }
 
+        function startHeartbeatCheck() {
+            setInterval(() => {
+                const timeSinceLastHeartbeat = Date.now() - lastHeartbeat;
+                if (timeSinceLastHeartbeat > heartbeatTimeout) {
+                    console.log('心跳超时，重新连接...');
+                    ws.close();
+                }
+            }, 5000); // 每5秒检查一次
+        }
+
+        function updateProgress(data) {
+            console.log('收到进度更新:', data);
+            
+            // 更新进度条
+            document.getElementById('progressBar').style.width = `${data.percent}%`;
+            
+            // 更新状态消息
+            document.getElementById('status').textContent = data.message;
+            
+            // 更新详细信息
+            let details = `阶段: ${data.stage}\n`;
+            if (data.details) {
+                details += `详细信息:\n`;
+                for (const [key, value] of Object.entries(data.details)) {
+                    details += `${key}: ${value}\n`;
+                }
+            }
+            document.getElementById('details').textContent = details;
+        }
+
+        // 页面加载完成后连接
         window.addEventListener('load', function() {
             connect();
         });

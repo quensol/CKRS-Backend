@@ -2,7 +2,6 @@ import pandas as pd
 import os
 from collections import defaultdict
 from tqdm import tqdm
-from pyhanlp import *
 import threading
 from queue import Queue
 import sys

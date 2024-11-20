@@ -9,6 +9,7 @@ router = APIRouter()
 class ConnectionManager:
     def __init__(self):
         self.active_connections: Dict[int, WebSocket] = {}
+        self.heartbeat_interval = 30  # 30秒心跳间隔
 
     async def connect(self, analysis_id: int, websocket: WebSocket):
         try:
@@ -17,34 +18,24 @@ class ConnectionManager:
             self.active_connections[analysis_id] = websocket
             logger.info(f"WebSocket connected for analysis {analysis_id}")
             
-            # 发送测试消息
-            test_messages = [
-                {
-                    "stage": "initializing",
-                    "percent": 0,
-                    "message": "开始初始化...",
-                    "details": {"status": "starting"}
-                },
-                {
-                    "stage": "processing",
-                    "percent": 50,
-                    "message": "正在处理...",
-                    "details": {"status": "running"}
-                },
-                {
-                    "stage": "completed",
-                    "percent": 100,
-                    "message": "处理完成",
-                    "details": {"status": "done"}
-                }
-            ]
+            # 启动心跳
+            asyncio.create_task(self._heartbeat(analysis_id))
             
-            for msg in test_messages:
-                await asyncio.sleep(2)
-                await self.send_progress(analysis_id, msg)
         except Exception as e:
             logger.error(f"Error in connect: {str(e)}")
             raise HTTPException(status_code=500, detail=str(e))
+
+    async def _heartbeat(self, analysis_id: int):
+        """心跳保活机制"""
+        while analysis_id in self.active_connections:
+            try:
+                ws = self.active_connections[analysis_id]
+                await ws.send_json({"type": "heartbeat"})
+                await asyncio.sleep(self.heartbeat_interval)
+            except Exception as e:
+                logger.error(f"Heartbeat failed for analysis {analysis_id}: {str(e)}")
+                await self.disconnect(analysis_id)
+                break
 
     async def disconnect(self, analysis_id: int):
         if analysis_id in self.active_connections:
@@ -59,6 +50,7 @@ class ConnectionManager:
     async def send_progress(self, analysis_id: int, data: dict):
         if analysis_id in self.active_connections:
             try:
+                data["type"] = "progress"  # 添加消息类型
                 await self.active_connections[analysis_id].send_json(data)
                 logger.info(f"Sent progress update: {data}")
             except Exception as e:
