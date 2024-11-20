@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebSocket测试</title>
+    <style>
+        .progress {
+            width: 100%;
+            height: 20px;
+            background-color: #f0f0f0;
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 20px 0;
+        }
+        .progress-bar {
+            height: 100%;
+            background-color: #4CAF50;
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+        .message {
+            margin: 10px 0;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>WebSocket进度测试</h1>
+    <div class="progress">
+        <div id="progressBar" class="progress-bar"></div>
+    </div>
+    <div id="status" class="message">等待连接...</div>
+    <div id="details" class="message"></div>
+
+    <script>
+        const analysisId = 1;
+        let ws = null;
+        let reconnectAttempts = 0;
+        const maxReconnectAttempts = 5;
+
+        function connect() {
+            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsHost = window.location.host || '127.0.0.1:8000';
+            const wsUrl = `${wsProtocol}//${wsHost}/api/v1/keyword/ws/analysis/${analysisId}`;
+            
+            console.log('正在连接到:', wsUrl);
+            
+            ws = new WebSocket(wsUrl);
+            
+            ws.binaryType = 'blob';
+            
+            ws.onopen = function() {
+                console.log('WebSocket连接成功');
+                document.getElementById('status').textContent = '已连接';
+                reconnectAttempts = 0;
+            };
+            
+            ws.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                console.log('收到消息:', data);
+                
+                document.getElementById('progressBar').style.width = `${data.percent}%`;
+                document.getElementById('status').textContent = data.message;
+                document.getElementById('details').textContent = 
+                    `阶段: ${data.stage}\n详细信息: ${JSON.stringify(data.details)}`;
+            };
+            
+            ws.onerror = function(error) {
+                console.error('WebSocket错误:', error);
+                document.getElementById('status').textContent = '连接错误';
+            };
+            
+            ws.onclose = function(event) {
+                console.log('WebSocket closed with code:', event.code);
+                document.getElementById('status').textContent = '连接已关闭';
+                
+                if (reconnectAttempts < maxReconnectAttempts) {
+                    reconnectAttempts++;
+                    console.log(`尝试重连 (${reconnectAttempts}/${maxReconnectAttempts})...`);
+                    setTimeout(connect, 3000);
+                }
+            };
+        }
+
+        window.addEventListener('load', function() {
+            connect();
+        });
+    </script>
+</body>
+</html> 
