@@ -10,6 +10,10 @@ import os
 import numpy as np
 from app.api.v1.endpoints.websocket import manager
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
+
+# 创建线程池
+thread_pool = ThreadPoolExecutor(max_workers=4)
 
 def convert_numpy_int64(value):
     """转换numpy.int64为Python原生int类型"""
@@ -23,7 +27,7 @@ async def run_analysis(keyword: str, analysis_id: int):
     """运行关键词分析并保存结果"""
     db_conn = None
     try:
-        # 从环境变量获取数据库配置
+        # 更新状态为处理中
         db_url = settings.DATABASE_URL
         db_config = {
             'host': db_url.split('@')[1].split('/')[0],
@@ -34,7 +38,6 @@ async def run_analysis(keyword: str, analysis_id: int):
         db_conn = mysql.connector.connect(**db_config)
         cursor = db_conn.cursor()
         
-        # 更新状态为处理中
         cursor.execute("""
             UPDATE seed_keyword_analysis 
             SET status = 'processing'
@@ -59,8 +62,13 @@ async def run_analysis(keyword: str, analysis_id: int):
             "details": {"keyword": keyword}
         })
         
-        # 运行分析
-        await analyzer.run()
+        # 直接调用异步的load_data方法
+        await analyzer.load_data()
+        
+        # 运行分析的各个阶段
+        related_words = await analyzer.find_related_keywords()
+        mediator_df = await analyzer.calculate_search_volume(related_words)
+        await analyzer.find_competitors(mediator_df)
         
         # 报告完成进度
         await progress_callback({
@@ -74,6 +82,7 @@ async def run_analysis(keyword: str, analysis_id: int):
             }
         })
         
+        # 保存结果到数据库
         try:
             # 更新分析结果和状态
             total_volume = convert_numpy_int64(analyzer.df["Count"].sum())
@@ -148,15 +157,12 @@ async def run_analysis(keyword: str, analysis_id: int):
             
         except Exception as e:
             db_conn.rollback()
-            # 更新失败状态和错误信息
-            cursor.execute("""
-                UPDATE seed_keyword_analysis 
-                SET status = 'failed',
-                    error_message = %s
-                WHERE id = %s
-            """, (str(e), analysis_id))
-            db_conn.commit()
-            logger.error(f"Error saving to database: {str(e)}")
+            await progress_callback({
+                "stage": "error",
+                "percent": 0,
+                "message": f"保存结果时出错: {str(e)}",
+                "details": {"error": str(e)}
+            })
             raise
             
     except Exception as e:
@@ -170,6 +176,14 @@ async def run_analysis(keyword: str, analysis_id: int):
                 WHERE id = %s
             """, (str(e), analysis_id))
             db_conn.commit()
+            
+        # 发送错误进度
+        await manager.send_progress(analysis_id, {
+            "stage": "error",
+            "percent": 0,
+            "message": f"分析失败: {str(e)}",
+            "details": {"error": str(e)}
+        })
         raise
     finally:
         if db_conn and db_conn.is_connected():

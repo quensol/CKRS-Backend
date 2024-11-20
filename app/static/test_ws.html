@@ -1,8 +1,37 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>WebSocket测试</title>
+    <title>关键词分析进度</title>
     <style>
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .input-group {
+            margin: 20px 0;
+            display: flex;
+            gap: 10px;
+        }
+        .input-group input {
+            flex: 1;
+            padding: 8px;
+            font-size: 16px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .input-group button {
+            padding: 8px 20px;
+            font-size: 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .input-group button:hover {
+            background-color: #45a049;
+        }
         .progress {
             width: 100%;
             height: 20px;
@@ -22,72 +51,144 @@
             padding: 10px;
             border: 1px solid #ddd;
             border-radius: 5px;
+            white-space: pre-wrap;
+            font-family: monospace;
         }
     </style>
 </head>
 <body>
-    <h1>WebSocket进度测试</h1>
-    <div class="progress">
-        <div id="progressBar" class="progress-bar"></div>
+    <div class="container">
+        <h1>关键词分析进度</h1>
+        
+        <div class="input-group">
+            <input type="text" id="keywordInput" placeholder="输入关键词">
+            <button onclick="startNewAnalysis()">开始分析</button>
+        </div>
+
+        <div class="progress">
+            <div id="progressBar" class="progress-bar"></div>
+        </div>
+        <div id="status" class="message">等待输入关键词...</div>
+        <div id="details" class="message"></div>
     </div>
-    <div id="status" class="message">等待连接...</div>
-    <div id="details" class="message"></div>
 
     <script>
-        const analysisId = 1;
         let ws = null;
         let reconnectAttempts = 0;
         const maxReconnectAttempts = 5;
         let lastHeartbeat = Date.now();
-        const heartbeatTimeout = 35000; // 35秒超时(比服务器心跳间隔长)
+        const heartbeatTimeout = 35000;
+        let analysisCompleted = false;
 
-        function connect() {
-            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsHost = window.location.host || '127.0.0.1:8000';
-            const wsUrl = `${wsProtocol}//${wsHost}/api/v1/keyword/ws/analysis/${analysisId}`;
-            
-            console.log('正在连接到:', wsUrl);
-            
-            ws = new WebSocket(wsUrl);
-            
-            ws.onopen = function() {
-                console.log('WebSocket连接成功');
-                document.getElementById('status').textContent = '已连接';
-                reconnectAttempts = 0;
-                lastHeartbeat = Date.now();
+        async function startNewAnalysis() {
+            analysisCompleted = false;
+            const keyword = document.getElementById('keywordInput').value.trim();
+            if (!keyword) {
+                alert('请输入关键词');
+                return;
+            }
+
+            try {
+                // 先关闭现有的WebSocket连接
+                if (ws) {
+                    ws.close();
+                    ws = null;
+                }
+
+                // 发起分析请求
+                const response = await fetch(`/api/v1/keyword/analyze?keyword=${encodeURIComponent(keyword)}`, {
+                    method: 'POST'
+                });
                 
-                // 启动心跳检查
-                startHeartbeatCheck();
-            };
-            
-            ws.onmessage = function(event) {
-                const data = JSON.parse(event.data);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
                 
-                if (data.type === 'heartbeat') {
+                const data = await response.json();
+                console.log('分析任务创建成功:', data);
+                
+                // 更新状态显示
+                document.getElementById('status').textContent = `分析任务已创建 (ID: ${data.id})`;
+                
+                // 立即建立WebSocket连接并等待连接成功
+                await connectWebSocket(data.id);
+                
+                // 发送开始分析的请求
+                const startResponse = await fetch(`/api/v1/keyword/start-analysis/${data.id}`, {
+                    method: 'POST'
+                });
+                
+                if (!startResponse.ok) {
+                    throw new Error(`启动分析失败: ${startResponse.status}`);
+                }
+                
+            } catch (error) {
+                console.error('操作失败:', error);
+                document.getElementById('status').textContent = `操作失败: ${error.message}`;
+            }
+        }
+
+        function connectWebSocket(analysisId) {
+            return new Promise((resolve, reject) => {
+                const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsHost = window.location.host || '127.0.0.1:8000';
+                const wsUrl = `${wsProtocol}//${wsHost}/api/v1/keyword/ws/analysis/${analysisId}`;
+                
+                console.log('正在连接WebSocket:', wsUrl);
+                
+                ws = new WebSocket(wsUrl);
+                
+                ws.onopen = function() {
+                    console.log('WebSocket连接成功');
+                    document.getElementById('status').textContent = '已连接到分析进度推送';
+                    reconnectAttempts = 0;
                     lastHeartbeat = Date.now();
-                    return;
-                }
+                    startHeartbeatCheck();
+                    resolve();  // WebSocket连接成功
+                };
                 
-                if (data.type === 'progress') {
-                    updateProgress(data);
-                }
-            };
-            
-            ws.onerror = function(error) {
-                console.error('WebSocket错误:', error);
-                document.getElementById('status').textContent = '连接错误';
-            };
-            
-            ws.onclose = function(event) {
-                console.log('WebSocket closed with code:', event.code);
-                document.getElementById('status').textContent = '连接已关闭';
+                ws.onmessage = function(event) {
+                    const data = JSON.parse(event.data);
+                    
+                    if (data.type === 'heartbeat') {
+                        lastHeartbeat = Date.now();
+                        return;
+                    }
+                    
+                    if (data.type === 'progress') {
+                        updateProgress(data);
+                        
+                        if (data.stage === 'completed' || data.stage === 'error') {
+                            analysisCompleted = true;
+                            console.log('分析已完成，关闭WebSocket连接');
+                            ws.close();
+                        }
+                    }
+                };
                 
-                if (reconnectAttempts < maxReconnectAttempts) {
-                    reconnectAttempts++;
-                    console.log(`尝试重连 (${reconnectAttempts}/${maxReconnectAttempts})...`);
-                    setTimeout(connect, 3000);
-                }
-            };
+                ws.onerror = function(error) {
+                    console.error('WebSocket错误:', error);
+                    document.getElementById('status').textContent = '连接错误';
+                };
+                
+                ws.onclose = function(event) {
+                    console.log('WebSocket连接关闭:', event.code);
+                    document.getElementById('status').textContent = '连接已关闭';
+                    
+                    if (!analysisCompleted && reconnectAttempts < maxReconnectAttempts) {
+                        reconnectAttempts++;
+                        console.log(`尝试重连 (${reconnectAttempts}/${maxReconnectAttempts})...`);
+                        setTimeout(() => connectWebSocket(analysisId), 3000);
+                    }
+                };
+
+                // 添加连接超时处理
+                setTimeout(() => {
+                    if (ws.readyState !== WebSocket.OPEN) {
+                        reject(new Error('WebSocket连接超时'));
+                    }
+                }, 5000);
+            });
         }
 
         function startHeartbeatCheck() {
@@ -97,7 +198,7 @@
                     console.log('心跳超时，重新连接...');
                     ws.close();
                 }
-            }, 5000); // 每5秒检查一次
+            }, 5000);
         }
 
         function updateProgress(data) {
@@ -119,11 +220,6 @@
             }
             document.getElementById('details').textContent = details;
         }
-
-        // 页面加载完成后连接
-        window.addEventListener('load', function() {
-            connect();
-        });
     </script>
 </body>
 </html> 

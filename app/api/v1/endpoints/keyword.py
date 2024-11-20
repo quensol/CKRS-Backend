@@ -26,10 +26,9 @@ router = APIRouter()
 @router.post("/analyze", response_model=AnalysisBrief)
 async def analyze_keyword(
     keyword: str,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
-    """启动新的关键词分析"""
+    """创建新的分析任务"""
     try:
         # 检查是否存在已完成的分析
         existing_analysis = db.query(models.SeedKeywordAnalysis).filter(
@@ -58,13 +57,32 @@ async def analyze_keyword(
             "seed_search_ratio": 0
         }
         db_analysis = create_analysis(db, analysis_result)
-        
-        # 在后台运行分析任务
-        background_tasks.add_task(run_analysis, keyword, db_analysis.id)
-        
         return db_analysis
+        
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+@router.post("/start-analysis/{analysis_id}", response_model=AnalysisBrief)
+async def start_analysis(
+    analysis_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """启动分析任务"""
+    analysis = db.query(models.SeedKeywordAnalysis).filter(
+        models.SeedKeywordAnalysis.id == analysis_id
+    ).first()
+    
+    if not analysis:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+        
+    if analysis.status not in ["pending"]:
+        raise HTTPException(status_code=400, detail="Analysis cannot be started")
+    
+    # 在后台运行分析任务
+    background_tasks.add_task(run_analysis, analysis.seed_keyword, analysis_id)
+    
+    return analysis
 
 @router.get("/analysis/{analysis_id}", response_model=AnalysisDetail)
 async def get_analysis_result(analysis_id: int, db: Session = Depends(get_db)):

@@ -43,10 +43,17 @@ class KeywordAnalyzer:
             print(*args, **kwargs)
             print_queue.task_done()
 
-    def load_data(self):
+    async def load_data(self):
         """加载并预处理数据"""
         if self.df is None:
             self._safe_print('读取数据文件...')
+            await self.report_progress(
+                "initializing",
+                10,
+                "正在读取数据文件...",
+                {"step": "reading_file"}
+            )
+            
             self.df = pd.read_csv(self.csv_file)
             
             # 移除空值和NaN
@@ -54,23 +61,61 @@ class KeywordAnalyzer:
             
             # 预先分词并创建查找表
             self._safe_print('预处理数据...')
+            await self.report_progress(
+                "initializing",
+                30,
+                "正在预处理数据...",
+                {"step": "preprocessing"}
+            )
+            
             # 确保Keyword是字符串类型
             self.df['Keyword'] = self.df['Keyword'].astype(str)
             self.df['words'] = self.df['Keyword'].str.split()
             
             # 创建关键词索引
             self._safe_print('创建关键词索引...')
+            await self.report_progress(
+                "initializing",
+                60,
+                "正在创建关键词索引...",
+                {"step": "creating_index"}
+            )
+            
             self.keyword_index = defaultdict(list)
+            total_rows = len(self.df)
             for idx, words in enumerate(self.df['words']):
                 if isinstance(words, list):  # 确保words是列表
                     for word in words:
                         self.keyword_index[word].append(idx)
+                
+                if idx % 1000 == 0:  # 每处理1000行更新一次进度
+                    progress = int(60 + (idx / total_rows * 30))  # 60-90%
+                    await self.report_progress(
+                        "initializing",
+                        progress,
+                        f"正在创建索引 ({idx}/{total_rows})",
+                        {
+                            "step": "creating_index",
+                            "current": idx,
+                            "total": total_rows
+                        }
+                    )
             
             # 获取包含种子关键词的查询
             self.seed_indices = self.keyword_index[self.seed_keyword]
-            # 使用loc而不是直接用索引
             self.seed_queries = self.df.loc[self.df.index[self.seed_indices]].index
             self.seed_volume = self.df.loc[self.df.index[self.seed_indices], 'Count'].sum()
+            
+            await self.report_progress(
+                "initializing",
+                100,
+                "初始化完成",
+                {
+                    "step": "completed",
+                    "seed_keyword": self.seed_keyword,
+                    "total_records": len(self.df)
+                }
+            )
 
     def _get_keyword_mask(self, keyword):
         """使用索引快速获取包含关键词的记录"""
@@ -111,7 +156,7 @@ class KeywordAnalyzer:
                     cooccurrence[word] += count
             
             # 报告进度
-            if idx % 100 == 0:  # 每处理100条记录报告一次进度
+            if idx % 50 == 0:  # 改为每50条更新一次
                 percent = int((idx + 1) / total_queries * 100)
                 await self.report_progress(
                     "analyzing_cooccurrence",
@@ -527,7 +572,7 @@ class KeywordAnalyzer:
         """运行完整分析流程"""
         try:
             # 1. 加载数据
-            self.load_data()
+            await self.load_data()
             
             # 2. 查找中介关键词
             related_words = await self.find_related_keywords()
@@ -541,9 +586,17 @@ class KeywordAnalyzer:
             self._safe_print('\n分析完成！所有结果已保存在result目录下')
             
         except Exception as e:
+            # 添加错误状态推送
+            await self.report_progress(
+                "error",
+                0,
+                f"分析过程出错: {str(e)}",
+                {
+                    "error": str(e)
+                }
+            )
             self._safe_print(f'发生错误: {str(e)}')
         finally:
-            # 停止打印线程
             print_queue.put((None, None))
             self.print_thread.join()
 
