@@ -111,9 +111,11 @@ class ConnectionManager:
                 try:
                     await websocket.send_json(data)
                     
-                    # 如果是完成或错误消息，发送后立即断开连接
+                    # 如果是完成或错误消息，等待消息发送完成后再断开连接
                     if data.get("stage") in ["completed", "error"]:
-                        logger.info(f"Analysis {analysis_id} {data['stage']}, closing connection")
+                        logger.info(f"Analysis {analysis_id} {data['stage']}, waiting before closing")
+                        # 添加短暂延迟确保消息发送完成
+                        await asyncio.sleep(0.5)
                         # 取消心跳任务
                         if analysis_id in self.heartbeat_tasks and websocket in self.heartbeat_tasks[analysis_id]:
                             task = self.heartbeat_tasks[analysis_id][websocket]

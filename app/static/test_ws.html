@@ -160,8 +160,8 @@
                         
                         if (data.stage === 'completed' || data.stage === 'error') {
                             analysisCompleted = true;
-                            console.log('分析已完成，关闭WebSocket连接');
-                            ws.close();
+                            console.log('分析已完成，等待连接关闭');
+                            // 不主动关闭连接，等待服务器关闭
                         }
                     }
                 };
@@ -173,12 +173,17 @@
                 
                 ws.onclose = function(event) {
                     console.log('WebSocket连接关闭:', event.code);
-                    document.getElementById('status').textContent = '连接已关闭';
                     
+                    // 只有在分析未完成且未达到最大重连次数时才重连
                     if (!analysisCompleted && reconnectAttempts < maxReconnectAttempts) {
+                        document.getElementById('status').textContent = '连接已断开，正在重新连接...';
                         reconnectAttempts++;
                         console.log(`尝试重连 (${reconnectAttempts}/${maxReconnectAttempts})...`);
                         setTimeout(() => connectWebSocket(analysisId), 3000);
+                    } else if (analysisCompleted) {
+                        document.getElementById('status').textContent = '分析已完成，连接已关闭';
+                    } else {
+                        document.getElementById('status').textContent = '连接已关闭';
                     }
                 };
 
