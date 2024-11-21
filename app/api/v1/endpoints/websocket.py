@@ -109,21 +109,34 @@ class ConnectionManager:
             failed_connections = []
             for websocket in self.active_connections[analysis_id][:]:
                 try:
-                    await websocket.send_json(data)
-                    
-                    # 如果是完成或错误消息，等待消息发送完成后再断开连接
+                    # 如果是完成或错误消息，确保这是最后发送的消息
                     if data.get("stage") in ["completed", "error"]:
-                        logger.info(f"Analysis {analysis_id} {data['stage']}, waiting before closing")
+                        # 先发送一个最终的进度更新
+                        final_progress = {
+                            "type": "progress",
+                            "stage": data["stage"],
+                            "percent": 100,
+                            "message": "分析已完成" if data["stage"] == "completed" else "分析出错",
+                            "details": data.get("details", {})
+                        }
+                        await websocket.send_json(final_progress)
+                        
                         # 添加短暂延迟确保消息发送完成
                         await asyncio.sleep(0.5)
+                        
                         # 取消心跳任务
                         if analysis_id in self.heartbeat_tasks and websocket in self.heartbeat_tasks[analysis_id]:
                             task = self.heartbeat_tasks[analysis_id][websocket]
                             if not task.done():
                                 task.cancel()
+                        
                         # 关闭连接
+                        logger.info(f"Analysis {analysis_id} {data['stage']}, closing connection")
                         await websocket.close(code=1000)  # 1000 表示正常关闭
                         failed_connections.append(websocket)
+                    else:
+                        # 对于普通进度消息，直接发送
+                        await websocket.send_json(data)
                         
                 except Exception as e:
                     logger.error(f"Error sending progress: {str(e)}")
