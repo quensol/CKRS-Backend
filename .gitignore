@@ -48,3 +48,4 @@ htmlcov/
 result/
 query_list_3.csv
 .env
+websocket_api_doc.txt

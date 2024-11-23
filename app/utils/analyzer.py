@@ -4,13 +4,14 @@ from keyword_analysis import KeywordAnalyzer
 import mysql.connector
 from sqlalchemy.orm import Session
 from app.core.config import settings
-from app.core.logger import logger
+from app.core.logger import logger, log_memory_usage
 import pandas as pd
 import os
 import numpy as np
 from app.api.v1.endpoints.websocket import manager
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+import gc
 
 # 创建线程池
 thread_pool = ThreadPoolExecutor(max_workers=4)
@@ -25,7 +26,11 @@ def convert_numpy_int64(value):
 
 async def run_analysis(keyword: str, analysis_id: int):
     """运行关键词分析并保存结果"""
+    logger.info(f"开始执行分析任务 ID: {analysis_id}, 关键词: {keyword}")
+    log_memory_usage()
+    
     db_conn = None
+    analyzer = None
     try:
         # 更新状态为处理中
         db_url = settings.DATABASE_URL
@@ -81,6 +86,9 @@ async def run_analysis(keyword: str, analysis_id: int):
                 "seed_volume": analyzer.seed_volume
             }
         })
+        
+        logger.info(f"分析任务完成 ID: {analysis_id}")
+        log_memory_usage()
         
         # 保存结果到数据库
         try:
@@ -167,6 +175,7 @@ async def run_analysis(keyword: str, analysis_id: int):
             
     except Exception as e:
         logger.error(f"Analysis failed: {str(e)}")
+        log_memory_usage()
         if db_conn and db_conn.is_connected():
             cursor = db_conn.cursor()
             cursor.execute("""
@@ -186,6 +195,9 @@ async def run_analysis(keyword: str, analysis_id: int):
         })
         raise
     finally:
+        if analyzer:
+            analyzer.cleanup()  # 清理资源
         if db_conn and db_conn.is_connected():
             cursor.close()
-            db_conn.close() 
+            db_conn.close()
+        gc.collect()  # 强制垃圾回收

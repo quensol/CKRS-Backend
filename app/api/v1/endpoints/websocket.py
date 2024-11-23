@@ -1,6 +1,6 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
 from typing import Dict, List
-from app.core.logger import logger
+from app.core.logger import logger, log_memory_usage
 import json
 import asyncio
 import numpy as np
@@ -24,6 +24,7 @@ class ConnectionManager:
         self.active_connections: Dict[int, List[WebSocket]] = {}
         self.heartbeat_interval = 30
         self.heartbeat_tasks: Dict[int, Dict[WebSocket, asyncio.Task]] = {}
+        self.cleanup_task = asyncio.create_task(self._periodic_cleanup())
 
     async def connect(self, analysis_id: int, websocket: WebSocket):
         """建立新的WebSocket连接"""
@@ -82,18 +83,19 @@ class ConnectionManager:
                         task.cancel()
                     del self.heartbeat_tasks[analysis_id][websocket]
                 
+                # 关闭连接
                 try:
                     await websocket.close()
-                except Exception as e:
-                    logger.debug(f"Error closing websocket: {str(e)}")
+                except Exception:
+                    pass
+            
+            # 清理空列表和任务字典
+            if analysis_id in self.active_connections and not self.active_connections[analysis_id]:
+                del self.active_connections[analysis_id]
+            if analysis_id in self.heartbeat_tasks and not self.heartbeat_tasks[analysis_id]:
+                del self.heartbeat_tasks[analysis_id]
                 
-                # 如果没有更多连接，清理数据结构
-                if not self.active_connections[analysis_id]:
-                    del self.active_connections[analysis_id]
-                    if analysis_id in self.heartbeat_tasks:
-                        del self.heartbeat_tasks[analysis_id]
-                
-                logger.info(f"WebSocket disconnected for analysis {analysis_id}")
+            logger.info(f"WebSocket disconnected for analysis {analysis_id}")
                 
         except Exception as e:
             logger.error(f"Error in disconnect: {str(e)}", exc_info=True)
@@ -145,6 +147,32 @@ class ConnectionManager:
             # 清理失败或已完成的连接
             for websocket in failed_connections:
                 await self.disconnect(analysis_id, websocket)
+
+    async def _periodic_cleanup(self):
+        """定期清理断开的连接和过期的任务"""
+        while True:
+            try:
+                logger.info("执行定期清理")
+                log_memory_usage()
+                
+                # 清理空的连接列表
+                empty_analyses = [
+                    analysis_id for analysis_id, connections 
+                    in self.active_connections.items() 
+                    if not connections
+                ]
+                for analysis_id in empty_analyses:
+                    del self.active_connections[analysis_id]
+                    if analysis_id in self.heartbeat_tasks:
+                        del self.heartbeat_tasks[analysis_id]
+                
+                logger.info(f"当前活动连接数: {sum(len(conns) for conns in self.active_connections.values())}")
+                log_memory_usage()
+                
+                await asyncio.sleep(300)  # 每5分钟清理一次
+            except Exception as e:
+                logger.error(f"Cleanup error: {str(e)}")
+                await asyncio.sleep(60)
 
 manager = ConnectionManager()
 
