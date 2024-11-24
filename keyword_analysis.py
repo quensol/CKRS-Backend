@@ -174,6 +174,18 @@ class KeywordAnalyzer:
                 if count >= 2:
                     f.write(f'{word}\t\t{count}\n')
         
+        # 在方法结束前发送100%完成的进度
+        await self.report_progress(
+            "analyzing_cooccurrence",
+            100,
+            f"共现词分析完成 (共发现 {len(cooccurrence)} 个关键词)",
+            {
+                "current": total_queries,
+                "total": total_queries,
+                "found_words": len(cooccurrence)
+            }
+        )
+        
         logger.info("中介关键词分析完成")
         log_memory_usage()
         return sorted_words
@@ -183,6 +195,17 @@ class KeywordAnalyzer:
         logger.info("开始计算搜索量")
         log_memory_usage()
         
+        # 发送阶段开始的进度信息
+        await self.report_progress(
+            "calculating_volume",
+            0,
+            "开始计算搜索量...",
+            {
+                "step": "initializing",
+                "total_words": len(related_words)
+            }
+        )
+        
         # 定义过滤规则（与竞争词使用相同的规则）
         def is_valid_mediator(word):
             """判断中介词是否有效"""
@@ -190,7 +213,7 @@ class KeywordAnalyzer:
             if word.isdigit():
                 return False
             
-            # 过���单字母和单字符
+            # 过滤单字母和单字符
             if len(word) == 1:
                 return False
             
@@ -261,14 +284,69 @@ class KeywordAnalyzer:
             self._safe_print('未找到符合条件的中介关键词')
             return pd.DataFrame()
         
+        # 更新进度信息
+        await self.report_progress(
+            "calculating_volume",
+            0,
+            f"开始计算 {len(related_keywords)} 个关键词的搜索量",
+            {
+                "step": "volume_calculation",
+                "total": len(related_keywords),
+                "current": 0
+            }
+        )
+        
         # 批量预计算所有中介词的搜索量
         self._safe_print('预计算中介关键词搜索量...')
         related_volumes = {}
-        for related_keyword, _ in tqdm(related_keywords):
+        total_keywords = len(related_keywords)
+        update_interval = max(1, int(total_keywords * 0.005))  # 每处理0.5%的数据更新一次
+        
+        # 使用tqdm创建进度条，设置动态输出
+        progress_bar = tqdm(
+            total=total_keywords,
+            desc='计算搜索量',
+            file=sys.stdout,
+            dynamic_ncols=True,  # 动态调整宽度
+            leave=True,  # 保留进度条
+            position=0   # 固定位置
+        )
+        
+        for idx, (related_keyword, _) in enumerate(related_keywords):
             mask = self._get_keyword_mask(related_keyword)
             related_volumes[related_keyword] = self.df[mask]['Count'].sum()
+            
+            # 更新进度条
+            progress_bar.update(1)
+            
+            # WebSocket进度推送（频率更高）
+            if idx % update_interval == 0 or idx == total_keywords - 1:
+                percent = int((idx + 1) / total_keywords * 100)
+                await self.report_progress(
+                    "calculating_volume",
+                    percent,
+                    f"计算搜索量中 ({idx + 1}/{total_keywords})",
+                    {
+                        "step": "volume_calculation",
+                        "current": idx + 1,
+                        "total": total_keywords,
+                        "processed_words": idx + 1
+                    }
+                )
         
-        # 批量处理中介关键词，不再检查权重阈值
+        progress_bar.close()
+        
+        # 批量处理中介关键词
+        results = []
+        progress_bar = tqdm(
+            total=total_keywords,
+            desc='处理数据',
+            file=sys.stdout,
+            dynamic_ncols=True,
+            leave=True,
+            position=0
+        )
+        
         for idx, (related_keyword, both_volume) in enumerate(related_keywords):
             related_volume = related_volumes[related_keyword]
             weight = round(both_volume / self.seed_volume * 100, 4) if self.seed_volume > 0 else 0
@@ -281,19 +359,36 @@ class KeywordAnalyzer:
                 '权重': weight
             })
             
-            # 报告进度
-            if idx % 10 == 0:  # 每处理10个词报告一次进度
-                percent = int((idx + 1) / len(related_keywords) * 100)
+            # 更新进度条
+            progress_bar.update(1)
+            
+            # WebSocket进度推送（频率更高）
+            if idx % update_interval == 0 or idx == total_keywords - 1:
+                percent = int((idx + 1) / total_keywords * 100)
                 await self.report_progress(
                     "calculating_volume",
                     percent,
-                    f"正在计算搜索量 ({idx + 1}/{len(related_keywords)})",
+                    f"处理搜索量数据 ({idx + 1}/{total_keywords})",
                     {
+                        "step": "data_processing",
                         "current": idx + 1,
-                        "total": len(related_keywords),
+                        "total": total_keywords,
                         "processed_words": len(results)
                     }
                 )
+        
+        progress_bar.close()
+        
+        # 发送100%完成进度
+        await self.report_progress(
+            "calculating_volume",
+            100,
+            f"搜索量计算完成 (共处理 {len(results)} 个关键词)",
+            {
+                "step": "completed",
+                "total_words": len(results)
+            }
+        )
         
         if not results:
             self._safe_print('未找到符合条件的中介关键词')
