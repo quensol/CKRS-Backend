@@ -2,16 +2,22 @@ import pandas as pd
 import os
 from collections import defaultdict
 from tqdm import tqdm
-from pyhanlp import *
 import threading
 from queue import Queue
 import sys
 import mysql.connector
 import asyncio
+import time
+from app.core.logger import logger, log_memory_usage
+import gc
 
 # 全局变量
 print_queue = Queue()
-df_cache = {}
+df_cache = {
+    'data': None,
+    'last_access': 0,
+    'keyword_index': None
+}
 df_lock = threading.Lock()
 
 class KeywordAnalyzer:
@@ -44,34 +50,63 @@ class KeywordAnalyzer:
             print(*args, **kwargs)
             print_queue.task_done()
 
-    def load_data(self):
+    async def load_data(self):
         """加载并预处理数据"""
-        if self.df is None:
-            self._safe_print('读取数据文件...')
-            self.df = pd.read_csv(self.csv_file)
+        logger.info("开始加载数据")
+        log_memory_usage()
+        
+        with df_lock:
+            current_time = time.time()
             
-            # 移除空值和NaN
-            self.df = self.df.dropna(subset=['Keyword'])
+            # 检查是否需要重新加载数据
+            if df_cache['data'] is None or (current_time - df_cache['last_access']) > 3600:  # 1小时过期
+                self._safe_print('读取数据文件...')
+                await self.report_progress(
+                    "initializing",
+                    10,
+                    "正在读取数据文件...",
+                    {"step": "reading_file"}
+                )
+                
+                # 读取CSV文件
+                df = pd.read_csv(self.csv_file)
+                df = df.dropna(subset=['Keyword'])
+                df['Keyword'] = df['Keyword'].astype(str)
+                df['words'] = df['Keyword'].str.split()
+                
+                # 创建关键词索引
+                keyword_index = defaultdict(list)
+                total_rows = len(df)
+                for idx, words in enumerate(df['words']):
+                    if isinstance(words, list):
+                        for word in words:
+                            keyword_index[word].append(idx)
+                
+                # 更新缓存
+                df_cache['data'] = df
+                df_cache['keyword_index'] = keyword_index
+                df_cache['last_access'] = current_time
+                
+                logger.info("数据已重新加载到缓存")
+            else:
+                logger.info("使用缓存的数据")
+                df_cache['last_access'] = current_time
             
-            # 预先分词并创建查找表
-            self._safe_print('预处理数据...')
-            # 确保Keyword是字符串类型
-            self.df['Keyword'] = self.df['Keyword'].astype(str)
-            self.df['words'] = self.df['Keyword'].str.split()
+            # 使用缓存的数据
+            self.df = df_cache['data']
+            self.keyword_index = df_cache['keyword_index']
             
-            # 创建关键词索引
-            self._safe_print('创建关键词索引...')
-            self.keyword_index = defaultdict(list)
-            for idx, words in enumerate(self.df['words']):
-                if isinstance(words, list):  # 确保words是列表
-                    for word in words:
-                        self.keyword_index[word].append(idx)
-            
-            # 获取包含种子关键词的查询
+            # 获取种子关键词相关的数据
             self.seed_indices = self.keyword_index[self.seed_keyword]
-            # 使用loc而不是直接用索引
             self.seed_queries = self.df.loc[self.df.index[self.seed_indices]].index
             self.seed_volume = self.df.loc[self.df.index[self.seed_indices], 'Count'].sum()
+
+    def cleanup(self):
+        """清理资源"""
+        self.df = None
+        self.seed_queries = None
+        self.keyword_index = None
+        gc.collect()  # 强制垃圾回收
 
     def _get_keyword_mask(self, keyword):
         """使用索引快速获取包含关键词的记录"""
@@ -95,7 +130,8 @@ class KeywordAnalyzer:
 
     async def find_related_keywords(self):
         """查找中介关键词"""
-        self._safe_print('开始查找中介关键词...')
+        logger.info("开始查找中介关键词")
+        log_memory_usage()
         
         # 获取包含种子关键词的查询
         seed_mask = self.df['words'].apply(lambda x: self.seed_keyword in x)
@@ -112,7 +148,7 @@ class KeywordAnalyzer:
                     cooccurrence[word] += count
             
             # 报告进度
-            if idx % 100 == 0:  # 每处理100条记录报告一次进度
+            if idx % 50 == 0:  # 改为每50条更新一次
                 percent = int((idx + 1) / total_queries * 100)
                 await self.report_progress(
                     "analyzing_cooccurrence",
@@ -138,11 +174,37 @@ class KeywordAnalyzer:
                 if count >= 2:
                     f.write(f'{word}\t\t{count}\n')
         
+        # 在方法结束前发送100%完成的进度
+        await self.report_progress(
+            "analyzing_cooccurrence",
+            100,
+            f"共现词分析完成 (共发现 {len(cooccurrence)} 个关键词)",
+            {
+                "current": total_queries,
+                "total": total_queries,
+                "found_words": len(cooccurrence)
+            }
+        )
+        
+        logger.info("中介关键词分析完成")
+        log_memory_usage()
         return sorted_words
 
     async def calculate_search_volume(self, related_words):
         """计算搜索量"""
-        self._safe_print('开始计算搜索量...')
+        logger.info("开始计算搜索量")
+        log_memory_usage()
+        
+        # 发送阶段开始的进度信息
+        await self.report_progress(
+            "calculating_volume",
+            0,
+            "开始计算搜索量...",
+            {
+                "step": "initializing",
+                "total_words": len(related_words)
+            }
+        )
         
         # 定义过滤规则（与竞争词使用相同的规则）
         def is_valid_mediator(word):
@@ -222,14 +284,69 @@ class KeywordAnalyzer:
             self._safe_print('未找到符合条件的中介关键词')
             return pd.DataFrame()
         
+        # 更新进度信息
+        await self.report_progress(
+            "calculating_volume",
+            0,
+            f"开始计算 {len(related_keywords)} 个关键词的搜索量",
+            {
+                "step": "volume_calculation",
+                "total": len(related_keywords),
+                "current": 0
+            }
+        )
+        
         # 批量预计算所有中介词的搜索量
         self._safe_print('预计算中介关键词搜索量...')
         related_volumes = {}
-        for related_keyword, _ in tqdm(related_keywords):
+        total_keywords = len(related_keywords)
+        update_interval = max(1, int(total_keywords * 0.005))  # 每处理0.5%的数据更新一次
+        
+        # 使用tqdm创建进度条，设置动态输出
+        progress_bar = tqdm(
+            total=total_keywords,
+            desc='计算搜索量',
+            file=sys.stdout,
+            dynamic_ncols=True,  # 动态调整宽度
+            leave=True,  # 保留进度条
+            position=0   # 固定位置
+        )
+        
+        for idx, (related_keyword, _) in enumerate(related_keywords):
             mask = self._get_keyword_mask(related_keyword)
             related_volumes[related_keyword] = self.df[mask]['Count'].sum()
+            
+            # 更新进度条
+            progress_bar.update(1)
+            
+            # WebSocket进度推送（频率更高）
+            if idx % update_interval == 0 or idx == total_keywords - 1:
+                percent = int((idx + 1) / total_keywords * 100)
+                await self.report_progress(
+                    "calculating_volume",
+                    percent,
+                    f"计算搜索量中 ({idx + 1}/{total_keywords})",
+                    {
+                        "step": "volume_calculation",
+                        "current": idx + 1,
+                        "total": total_keywords,
+                        "processed_words": idx + 1
+                    }
+                )
         
-        # 批量处理中介关键词，不再检查权重阈值
+        progress_bar.close()
+        
+        # 批量处理中介关键词
+        results = []
+        progress_bar = tqdm(
+            total=total_keywords,
+            desc='处理数据',
+            file=sys.stdout,
+            dynamic_ncols=True,
+            leave=True,
+            position=0
+        )
+        
         for idx, (related_keyword, both_volume) in enumerate(related_keywords):
             related_volume = related_volumes[related_keyword]
             weight = round(both_volume / self.seed_volume * 100, 4) if self.seed_volume > 0 else 0
@@ -242,19 +359,36 @@ class KeywordAnalyzer:
                 '权重': weight
             })
             
-            # 报告进度
-            if idx % 10 == 0:  # 每处理10个词报告一次进度
-                percent = int((idx + 1) / len(related_keywords) * 100)
+            # 更新进度条
+            progress_bar.update(1)
+            
+            # WebSocket进度推送（频率更高）
+            if idx % update_interval == 0 or idx == total_keywords - 1:
+                percent = int((idx + 1) / total_keywords * 100)
                 await self.report_progress(
                     "calculating_volume",
                     percent,
-                    f"正在计算搜索量 ({idx + 1}/{len(related_keywords)})",
+                    f"处理搜索量数据 ({idx + 1}/{total_keywords})",
                     {
+                        "step": "data_processing",
                         "current": idx + 1,
-                        "total": len(related_keywords),
+                        "total": total_keywords,
                         "processed_words": len(results)
                     }
                 )
+        
+        progress_bar.close()
+        
+        # 发送100%完成进度
+        await self.report_progress(
+            "calculating_volume",
+            100,
+            f"搜索量计算完成 (共处理 {len(results)} 个关键词)",
+            {
+                "step": "completed",
+                "total_words": len(results)
+            }
+        )
         
         if not results:
             self._safe_print('未找到符合条件的中介关键词')
@@ -265,15 +399,18 @@ class KeywordAnalyzer:
         output_file = os.path.join(self.result_dir, f'search_volume_{self.seed_keyword}.csv')
         
         self._save_search_volume_results(output_file, results_df)
+        logger.info("搜索量计算完成")
+        log_memory_usage()
         return results_df
 
     async def find_competitors(self, mediator_df):
         """分析竞争关键词"""
+        logger.info("开始分析竞争关键词")
+        log_memory_usage()
+        
         if mediator_df.empty:
             self._safe_print('没有有效的中介关键词，跳过竞争关键词分析')
             return
-        
-        self._safe_print('开始分析竞争关键词...')
         
         # 定义过滤规则
         def is_valid_competitor(word):
@@ -325,7 +462,7 @@ class KeywordAnalyzer:
             if word in time_words:
                 return False
             
-            # 过滤常见数量词和单位
+            # 滤常见数量和单位
             unit_words = {'个', '件', '只', '条', '张', '台', '部', '款', '种',
                          '千克', '公斤', '克', '斤', '两', '升', '毫升', '米', '厘米',
                          '元', '块', '角', '分'}
@@ -403,6 +540,8 @@ class KeywordAnalyzer:
                 )
         
         self._save_competitor_results(all_competitors)
+        logger.info("竞争关键词分析完成")
+        log_memory_usage()
 
     def _save_search_volume_results(self, output_file, results_df):
         """保存搜索量结果"""
@@ -437,7 +576,7 @@ class KeywordAnalyzer:
             f.write('基础竞争度 = 竞争词与中介词的共现量 / (中介词总量 - 种子词与中介词共现量)\n')
             f.write('加权竞争度 = 基础竞争度 * 中介词权重\n\n')
         
-        summary_df.to_csv(output_file, mode='a', index=False)
+        summary_df.to_csv(output_file, mode='a', index=False, encoding='utf-8')
         self._safe_print(f'\n结果已保存至 {output_file}')
 
     def save_to_database(self, db_connection):
@@ -526,9 +665,12 @@ class KeywordAnalyzer:
 
     async def run(self):
         """运行完整分析流程"""
+        logger.info(f"开始分析关键词: {self.seed_keyword}")
+        log_memory_usage()
+        
         try:
             # 1. 加载数据
-            self.load_data()
+            await self.load_data()
             
             # 2. 查找中介关键词
             related_words = await self.find_related_keywords()
@@ -542,11 +684,58 @@ class KeywordAnalyzer:
             self._safe_print('\n分析完成！所有结果已保存在result目录下')
             
         except Exception as e:
+            # 添加错误状态推送
+            await self.report_progress(
+                "error",
+                0,
+                f"分析过程出错: {str(e)}",
+                {
+                    "error": str(e)
+                }
+            )
             self._safe_print(f'发生错误: {str(e)}')
         finally:
-            # 停止打印线程
+            logger.info("分析流程结束")
+            log_memory_usage()
+            # 清理资源
+            self.df = None
+            self.seed_queries = None
             print_queue.put((None, None))
             self.print_thread.join()
+            self.cleanup()
+
+    @staticmethod
+    def cleanup_cache():
+        """清理过期缓存"""
+        with df_lock:
+            current_time = time.time()
+            expired_keys = [
+                key for key, (df, timestamp) in df_cache.items()
+                if current_time - timestamp > 3600  # 1小时过期
+            ]
+            for key in expired_keys:
+                del df_cache[key]
+
+def clear_memory_cache():
+    """清理内存缓存"""
+    with df_lock:
+        df_cache['data'] = None
+        df_cache['keyword_index'] = None
+        df_cache['last_access'] = 0
+    gc.collect()
+
+async def periodic_cleanup():
+    """定期清理内存"""
+    while True:
+        try:
+            await asyncio.sleep(3600)  # 每小时检查一次
+            current_time = time.time()
+            with df_lock:
+                if df_cache['data'] is not None and (current_time - df_cache['last_access']) > 3600:
+                    logger.info("清理过期的数据缓存")
+                    clear_memory_cache()
+        except Exception as e:
+            logger.error(f"Periodic cleanup error: {str(e)}")
 
 def main():
     if len(sys.argv) > 1:
