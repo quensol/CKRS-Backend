@@ -14,7 +14,10 @@ setup(
         "pandas>=1.3.3",
         "tqdm>=4.62.3",
         "mysql-connector-python>=8.0.26",
-        "pyhanlp>=0.1.78",
         "python-multipart>=0.0.5",
+        "psutil>=5.8.0",
+        "watchfiles>=0.15.0",
+        "websockets>=10.0",
+        "numpy>=1.21.0",
     ],
 ) 
