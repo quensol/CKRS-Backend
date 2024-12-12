@@ -13,27 +13,25 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
-    openapi_url=f"{settings.API_V1_STR}/openapi.json"
+    openapi_url=f"{settings.API_V1_STR}/openapi.json",
+    docs_url="/docs",
+    redoc_url="/redoc"
 )
 
-# 配置CORS - 修改配置
+# 配置CORS
 origins = [
     "http://localhost",
     "http://localhost:8000",
     "http://127.0.0.1",
     "http://127.0.0.1:8000",
-    "file://",
-    "*"
 ]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
-    allow_origin_regex=".*",  # 允许所有源
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"],
 )
 
 # 挂载静态文件目录
@@ -46,9 +44,7 @@ app.include_router(api_router, prefix=settings.API_V1_STR)
 
 @app.get("/")
 async def root():
-    # 返回测试页面
-    test_page = os.path.join(static_dir, "test_ws.html")
-    return FileResponse(test_page)
+    return {"message": "Welcome to Keyword Analysis API"}
 
 @app.on_event("startup")
 async def startup_event():

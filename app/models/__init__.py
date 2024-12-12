@@ -4,10 +4,20 @@ from app.models.keyword import (
     SearchVolumeAnalysis,
     CompetitorKeyword
 )
+from app.models.filtered_keywords import (
+    FilteredSearchVolumeAnalysis,
+    SearchKeywordCategoryMapping,
+    FilteredCompetitorKeywords,
+    CompetitorCategoryMapping
+)
 
 __all__ = [
     "SeedKeywordAnalysis",
     "CooccurrenceKeyword",
     "SearchVolumeAnalysis",
-    "CompetitorKeyword"
+    "CompetitorKeyword",
+    "FilteredSearchVolumeAnalysis",
+    "SearchKeywordCategoryMapping",
+    "FilteredCompetitorKeywords",
+    "CompetitorCategoryMapping"
 ] 
