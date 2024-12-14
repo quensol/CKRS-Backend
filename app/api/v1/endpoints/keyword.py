@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List, Optional
+from app.core.logger import logger
 from app.schemas.keyword import (
     AnalysisBrief,
     Cooccurrence,
@@ -22,8 +23,12 @@ from app import models
 from app.core.database import get_db
 from app.utils.analyzer import run_analysis
 import os
+from app.services.gpt_service import GPTService
 
 router = APIRouter()
+
+# 创建GPT服务实例
+gpt_service = GPTService()
 
 @router.post("/analyze", response_model=AnalysisBrief)
 async def analyze_keyword(
@@ -194,3 +199,92 @@ async def get_user_profile_distribution(
     if not result or not result.get("user_profile_distribution"):
         raise HTTPException(status_code=404, detail="User profile distribution not found")
     return result["user_profile_distribution"] 
+
+@router.post("/analysis/{analysis_id}/market-insights", 
+    response_model=str,
+    summary="生成市场洞察",
+    description="""
+    基于指定分析ID的数据生成市场洞察报告，包括：
+    - 目标用户分析
+    - 市场竞争分析
+    - 用户需求洞察
+    - 营销策略建议
+    - 发展建议
+    """
+)
+async def generate_market_insights(
+    analysis_id: int,
+    db: Session = Depends(get_db)
+):
+    """生成市场洞察报告"""
+    try:
+        # 检查分析记录是否存在
+        analysis = db.query(models.SeedKeywordAnalysis).filter(
+            models.SeedKeywordAnalysis.id == analysis_id
+        ).first()
+        
+        if not analysis:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Analysis ID {analysis_id} not found"
+            )
+            
+        # 检查是否已有市场洞察
+        existing_insight = db.query(models.MarketInsight).filter(
+            models.MarketInsight.seed_analysis_id == analysis_id
+        ).first()
+        
+        if existing_insight:
+            return existing_insight.content
+            
+        # 生成新的市场洞察
+        insights = await gpt_service.analyze_market_insights(analysis_id, db)
+        
+        if insights.startswith("市场洞察生成失败"):
+            raise HTTPException(
+                status_code=500,
+                detail=insights
+            )
+            
+        return insights
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"生成市场洞察失败: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"生成市场洞察失败: {str(e)}"
+        )
+
+@router.get("/analysis/{analysis_id}/market-insights",
+    response_model=str,
+    summary="获取市场洞察",
+    description="获取指定分析ID的市场洞察报告"
+)
+async def get_market_insights(
+    analysis_id: int,
+    db: Session = Depends(get_db)
+):
+    """获取市场洞察报告"""
+    try:
+        insight = db.query(models.MarketInsight).filter(
+            models.MarketInsight.seed_analysis_id == analysis_id
+        ).first()
+        
+        if not insight:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Market insights for analysis ID {analysis_id} not found"
+            )
+            
+        return insight.content
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取市场洞察失败: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"获取市场洞察失败: {str(e)}"
+        ) 

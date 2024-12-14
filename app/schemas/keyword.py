@@ -68,6 +68,15 @@ class UserProfileDist(BaseModel):
     class Config:
         from_attributes = True
 
+class MarketInsight(BaseModel):
+    id: int
+    seed_analysis_id: int
+    content: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
 class AnalysisDetail(BaseModel):
     id: int
     seed_keyword: str
@@ -81,6 +90,7 @@ class AnalysisDetail(BaseModel):
     competitors: List[Competitor]
     user_profile_stats: Optional[UserProfileStats]
     user_profile_distribution: Optional[List[UserProfileDist]]
+    market_insight: Optional[str] = None
 
     class Config:
         from_attributes = True 

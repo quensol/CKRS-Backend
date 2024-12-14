@@ -222,3 +222,17 @@ CHECK (1=1) /*
     scenario: 竞争场景 - 体现竞争关系的使用场景
     other: 其他 - 其他有价值的竞争关系词
 */; 
+
+-- 市场洞察结果表
+CREATE TABLE market_insights (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键ID',
+    seed_analysis_id BIGINT NOT NULL COMMENT '关联的种子关键词分析ID',
+    content TEXT NOT NULL COMMENT '市场洞察内容',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    
+    -- 添加外键约束
+    FOREIGN KEY (seed_analysis_id) REFERENCES seed_keyword_analysis(id),
+    
+    -- 添加索引
+    INDEX idx_seed_analysis_id (seed_analysis_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='市场洞察结果表'; 
