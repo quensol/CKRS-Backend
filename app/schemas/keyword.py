@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict
 from datetime import datetime
 
 class AnalysisBase(BaseModel):
@@ -47,6 +47,27 @@ class Competitor(BaseModel):
     class Config:
         from_attributes = True
 
+class UserProfileStats(BaseModel):
+    total_users: int
+    avg_age: float
+    male_ratio: float
+    female_ratio: float
+    avg_education: float
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class UserProfileDist(BaseModel):
+    profile_type: str
+    category_value: int
+    user_count: int
+    percentage: float
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
 class AnalysisDetail(BaseModel):
     id: int
     seed_keyword: str
@@ -58,6 +79,8 @@ class AnalysisDetail(BaseModel):
     cooccurrence_keywords: List[Cooccurrence]
     search_volumes: List[SearchVolume]
     competitors: List[Competitor]
+    user_profile_stats: Optional[UserProfileStats]
+    user_profile_distribution: Optional[List[UserProfileDist]]
 
     class Config:
         from_attributes = True 

@@ -61,17 +61,18 @@ class GPTService:
         """
         使用GPT分析和分类关键词
         """
-        # 归一化权重到0-1区间
-        normalized_weights = self._normalize_weights(weights)
-        
-        # 构建关键词和权重的列表
-        keyword_list = [
-            f"{kw} (weight: {weight:.2f})"
-            for kw, weight in zip(keywords, normalized_weights)
-        ]
-        
-        # 构建通用的prompt
-        prompt = f"""作为搜索意图分析专家，请仔细分析以下与"{seed_keyword}"相关的共现词列表。
+        try:
+            # 归一化权重到0-1区间
+            normalized_weights = self._normalize_weights(weights)
+            
+            # 构建关键词和权重的列表
+            keyword_list = [
+                f"{kw} (weight: {weight:.2f})"
+                for kw, weight in zip(keywords, normalized_weights)
+            ]
+            
+            # 构建通用的prompt
+            prompt = f"""作为搜索意图分析专家，请仔细分析以下与"{seed_keyword}"相关的共现词列表。
 
 分析要求：
 1. 关键词筛选：
@@ -152,9 +153,8 @@ class GPTService:
 
 只返回JSON，不要其他说明。"""
 
-        try:
-            # 记录完整的prompt（使用encode和decode处理编码问题）
-            logger.info(prompt.encode('utf-8').decode('utf-8'))
+            # 记录完整的prompt
+            logger.info(f"Sending prompt to GPT:\n{prompt}")
             
             # 调用GPT API
             response = await self.client.chat.completions.create(
@@ -176,22 +176,51 @@ class GPTService:
                 response_format={"type": "json_object"}
             )
             
-            result = json.loads(response.choices[0].message.content)
+            # 记录原始响应
+            logger.info(f"Raw GPT response:\n{response}")
+            
+            # 获取响应内容并清理
+            content = response.choices[0].message.content
+            if not content:
+                raise ValueError("GPT returned empty response")
+                
+            # 清理可能的Markdown代码块标记
+            content = content.strip()
+            if content.startswith('```'):
+                # 移除开头的```json或```
+                content = content.split('\n', 1)[1]
+            if content.endswith('```'):
+                # 移除结尾的```
+                content = content.rsplit('\n', 1)[0]
+                
+            logger.info(f"Cleaned GPT response content:\n{content}")
+            
+            try:
+                result = json.loads(content)
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse cleaned GPT response: {content}")
+                raise ValueError(f"Invalid JSON response from GPT: {str(e)}")
+            
+            # 验证响应格式
+            if not isinstance(result, dict) or 'classifications' not in result:
+                raise ValueError(f"Unexpected response format: {result}")
             
             # 验证和修正类别
             for item in result.get('classifications', []):
-                if 'category' in item:
-                    item['category'] = self._validate_search_category(item['category'])
+                if 'category' not in item:
+                    logger.warning(f"Missing category in item: {item}")
+                    continue
+                item['category'] = self._validate_search_category(item['category'])
             
-            # 记录GPT的响应（使用encode和decode处理编码问题）
-            logger.info(json.dumps(result, ensure_ascii=False, indent=2).encode('utf-8').decode('utf-8'))
+            # 记录处理后的结果
+            logger.info(f"Processed result:\n{json.dumps(result, ensure_ascii=False, indent=2)}")
             return result
             
         except json.JSONDecodeError as e:
-            logger.error(f"GPT返回的结果解析失败: {str(e)}")
+            logger.error(f"JSON decode error: {str(e)}")
             raise ValueError(f"GPT返回的结果不是有效的JSON格式: {str(e)}")
         except Exception as e:
-            logger.error(f"处理过程中发生错误: {str(e)}")
+            logger.error(f"Error in analyze_keywords: {str(e)}")
             raise
             
     def _normalize_weights(self, weights: List[float]) -> List[float]:
