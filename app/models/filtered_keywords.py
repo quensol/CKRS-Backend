@@ -45,10 +45,11 @@ class FilteredCompetitorKeywords(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     seed_analysis_id = Column(Integer, ForeignKey("seed_keyword_analysis.id"), nullable=False)
-    original_competitor_id = Column(Integer, ForeignKey("competitor_keyword.id"), nullable=False)
+    original_competitor_id = Column(Integer, ForeignKey("competitor_keywords.id"), nullable=False)
     competitor_keyword = Column(String(255), nullable=False)
     competition_type = Column(Enum(CompetitorKeywordCategory), nullable=False)
     cooccurrence_volume = Column(Integer, nullable=False)
+    base_competition_score = Column(Float, nullable=False)
     weighted_competition_score = Column(Float, nullable=False)
     gpt_confidence = Column(Float, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
