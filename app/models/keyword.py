@@ -19,6 +19,9 @@ class SeedKeywordAnalysis(Base):
     cooccurrence_keywords = relationship("CooccurrenceKeyword", back_populates="analysis")
     search_volumes = relationship("SearchVolumeAnalysis", back_populates="analysis")
     competitors = relationship("CompetitorKeyword", back_populates="analysis")
+    user_profile_stats = relationship("UserProfileStatistics", back_populates="analysis")
+    user_profile_dist = relationship("UserProfileDistribution", back_populates="analysis")
+    market_insight = relationship("MarketInsight", back_populates="analysis", uselist=False)
 
 class CooccurrenceKeyword(Base):
     __tablename__ = "cooccurrence_keywords"
@@ -61,3 +64,43 @@ class CompetitorKeyword(Base):
 
     # 添加关系
     analysis = relationship("SeedKeywordAnalysis", back_populates="competitors") 
+
+class UserProfileStatistics(Base):
+    __tablename__ = "user_profile_statistics"
+    
+    id = Column(BigInteger, primary_key=True, index=True)
+    seed_analysis_id = Column(BigInteger, ForeignKey("seed_keyword_analysis.id"))
+    total_users = Column(BigInteger, nullable=False)
+    avg_age = Column(DECIMAL(4,2), nullable=False)
+    male_ratio = Column(DECIMAL(5,2), nullable=False)
+    female_ratio = Column(DECIMAL(5,2), nullable=False)
+    avg_education = Column(DECIMAL(4,2), nullable=False)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+    
+    # 添加关系
+    analysis = relationship("SeedKeywordAnalysis", back_populates="user_profile_stats")
+
+class UserProfileDistribution(Base):
+    __tablename__ = "user_profile_distribution"
+    
+    id = Column(BigInteger, primary_key=True, index=True)
+    seed_analysis_id = Column(BigInteger, ForeignKey("seed_keyword_analysis.id"))
+    profile_type = Column(String(10), nullable=False)
+    category_value = Column(Integer, nullable=False)
+    user_count = Column(BigInteger, nullable=False)
+    percentage = Column(DECIMAL(5,2), nullable=False)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+    
+    # 添加关系
+    analysis = relationship("SeedKeywordAnalysis", back_populates="user_profile_dist") 
+
+class MarketInsight(Base):
+    __tablename__ = "market_insights"
+    
+    id = Column(BigInteger, primary_key=True, index=True)
+    seed_analysis_id = Column(BigInteger, ForeignKey("seed_keyword_analysis.id"))
+    content = Column(Text, nullable=False)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+    
+    # 添加关系
+    analysis = relationship("SeedKeywordAnalysis", back_populates="market_insight")

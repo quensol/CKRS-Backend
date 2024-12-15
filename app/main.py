@@ -13,10 +13,12 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
-    openapi_url=f"{settings.API_V1_STR}/openapi.json"
+    openapi_url=f"{settings.API_V1_STR}/openapi.json",
+    docs_url="/docs",
+    redoc_url="/redoc"
 )
 
-# 配置CORS - 修改配置
+# 配置CORS
 origins = [
     "http://localhost",
     "http://localhost:8000",
@@ -46,9 +48,7 @@ app.include_router(api_router, prefix=settings.API_V1_STR)
 
 @app.get("/")
 async def root():
-    # 返回测试页面
-    test_page = os.path.join(static_dir, "test_ws.html")
-    return FileResponse(test_page)
+    return {"message": "Welcome to Keyword Analysis API"}
 
 @app.on_event("startup")
 async def startup_event():

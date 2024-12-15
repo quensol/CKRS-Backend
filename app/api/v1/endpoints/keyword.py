@@ -1,12 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List, Optional
+from app.core.logger import logger
 from app.schemas.keyword import (
     AnalysisBrief,
     Cooccurrence,
     SearchVolume,
     Competitor,
-    AnalysisDetail
+    AnalysisDetail,
+    UserProfileStats,
+    UserProfileDist
 )
 from app.crud.keyword import (
     create_analysis,
@@ -20,8 +23,12 @@ from app import models
 from app.core.database import get_db
 from app.utils.analyzer import run_analysis
 import os
+from app.services.gpt_service import GPTService
 
 router = APIRouter()
+
+# 创建GPT服务实例
+gpt_service = GPTService()
 
 @router.post("/analyze", response_model=AnalysisBrief)
 async def analyze_keyword(
@@ -130,3 +137,154 @@ async def get_analysis_history(
     """获取分析历史"""
     analyses = get_analyses(db, skip=skip, limit=limit, keyword=keyword)
     return analyses 
+
+@router.get("/analysis/{analysis_id}/user-profiles", 
+    response_model=dict,
+    summary="获取用户画像分析结果",
+    description="""
+    获取指定分析ID的用户画像分析结果，包括：
+    - 用户总数
+    - 年龄分布
+    - 性别比例
+    - 教育程度分布
+    - 各维度的详细统计数据
+    """
+)
+async def get_user_profiles_endpoint(
+    analysis_id: int,
+    db: Session = Depends(get_db)
+):
+    """获取用户画像分析结果"""
+    result = get_analysis(db, analysis_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+        
+    # 提取用户画像数据
+    profile_data = {
+        "stats": result.get("user_profile_stats"),
+        "distribution": result.get("user_profile_distribution")
+    }
+    
+    if not profile_data["stats"]:
+        raise HTTPException(status_code=404, detail="User profile data not found")
+        
+    return profile_data
+
+@router.get("/analysis/{analysis_id}/user-profiles/stats", 
+    response_model=UserProfileStats,
+    summary="获取用户画像统计数据",
+    description="获取用户画像的汇总统计数据，包括总用户数、平均年龄、性别比例等"
+)
+async def get_user_profile_stats(
+    analysis_id: int,
+    db: Session = Depends(get_db)
+):
+    """获取用户画像统计数据"""
+    result = get_analysis(db, analysis_id)
+    if not result or not result.get("user_profile_stats"):
+        raise HTTPException(status_code=404, detail="User profile stats not found")
+    return result["user_profile_stats"]
+
+@router.get("/analysis/{analysis_id}/user-profiles/distribution", 
+    response_model=List[UserProfileDist],
+    summary="获取用户画像分布数据",
+    description="获取用户画像的详细分布数据，包括年龄、性别、教育程度的分布情况"
+)
+async def get_user_profile_distribution(
+    analysis_id: int,
+    db: Session = Depends(get_db)
+):
+    """获取用户画像分布数据"""
+    result = get_analysis(db, analysis_id)
+    if not result or not result.get("user_profile_distribution"):
+        raise HTTPException(status_code=404, detail="User profile distribution not found")
+    return result["user_profile_distribution"] 
+
+@router.post("/analysis/{analysis_id}/market-insights", 
+    response_model=str,
+    summary="生成市场洞察",
+    description="""
+    基于指定分析ID的数据生成市场洞察报告，包括：
+    - 目标用户分析
+    - 市场竞争分析
+    - 用户需求洞察
+    - 营销策略建议
+    - 发展建议
+    """
+)
+async def generate_market_insights(
+    analysis_id: int,
+    db: Session = Depends(get_db)
+):
+    """生成市场洞察报告"""
+    try:
+        # 检查分析记录是否存在
+        analysis = db.query(models.SeedKeywordAnalysis).filter(
+            models.SeedKeywordAnalysis.id == analysis_id
+        ).first()
+        
+        if not analysis:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Analysis ID {analysis_id} not found"
+            )
+            
+        # 检查是否已有市场洞察
+        existing_insight = db.query(models.MarketInsight).filter(
+            models.MarketInsight.seed_analysis_id == analysis_id
+        ).first()
+        
+        if existing_insight:
+            return existing_insight.content
+            
+        # 生成新的市场洞察
+        insights = await gpt_service.analyze_market_insights(analysis_id, db)
+        
+        if insights.startswith("市场洞察生成失败"):
+            raise HTTPException(
+                status_code=500,
+                detail=insights
+            )
+            
+        return insights
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"生成市场洞察失败: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"生成市场洞察失败: {str(e)}"
+        )
+
+@router.get("/analysis/{analysis_id}/market-insights",
+    response_model=str,
+    summary="获取市场洞察",
+    description="获取指定分析ID的市场洞察报告"
+)
+async def get_market_insights(
+    analysis_id: int,
+    db: Session = Depends(get_db)
+):
+    """获取市场洞察报告"""
+    try:
+        insight = db.query(models.MarketInsight).filter(
+            models.MarketInsight.seed_analysis_id == analysis_id
+        ).first()
+        
+        if not insight:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Market insights for analysis ID {analysis_id} not found"
+            )
+            
+        return insight.content
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取市场洞察失败: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"获取市场洞察失败: {str(e)}"
+        ) 

@@ -51,7 +51,11 @@ async def run_analysis(keyword: str, analysis_id: int):
         db_conn.commit()
         
         # 创建分析器实例
-        analyzer = KeywordAnalyzer(keyword)
+        analyzer = KeywordAnalyzer(
+            keyword,
+            analysis_id=analysis_id,
+            db_conn=db_conn  # 传入数据库连接
+        )
         
         # 设置进度回调
         async def progress_callback(data: dict):

@@ -10,6 +10,8 @@ import asyncio
 import time
 from app.core.logger import logger, log_memory_usage
 import gc
+import numpy as np
+import re
 
 # 全局变量
 print_queue = Queue()
@@ -21,13 +23,21 @@ df_cache = {
 df_lock = threading.Lock()
 
 class KeywordAnalyzer:
-    def __init__(self, seed_keyword, csv_file='query_list_3.csv'):
+    def __init__(self, seed_keyword, csv_file='query_list_3.csv', user_query_file='user_queries_filtered.utf8', analysis_id=None, db_conn=None):
         self.seed_keyword = seed_keyword
         self.csv_file = csv_file
         self.df = None
         self.seed_queries = None
         self.result_dir = 'result'
         self.progress_callback = None
+        self.user_query_file = user_query_file
+        self.user_df = None
+        self._query_cache = {}
+        self._profile_cache = {}
+        
+        # 添加数据库相关属性
+        self.analysis_id = analysis_id
+        self.db_conn = db_conn
         
         # 创建结果目录
         if not os.path.exists(self.result_dir):
@@ -100,6 +110,40 @@ class KeywordAnalyzer:
             self.seed_indices = self.keyword_index[self.seed_keyword]
             self.seed_queries = self.df.loc[self.df.index[self.seed_indices]].index
             self.seed_volume = self.df.loc[self.df.index[self.seed_indices], 'Count'].sum()
+            
+            # 加载用户查询数据
+            logger.info("加载用户查询数据")
+            try:
+                # 使用制表符分隔符读取数据
+                self.user_df = pd.read_csv(
+                    self.user_query_file,
+                    sep='\t',  # 指定制表符分隔
+                    names=['ID', 'age', 'gender', 'education', 'query'],  # 指定列名
+                    encoding='utf-8',  # 指定编码
+                    dtype={  # 指定数据类型
+                        'ID': int,
+                        'age': int,
+                        'gender': int,
+                        'education': int,
+                        'query': str
+                    }
+                )
+                
+                # 处理空值
+                self.user_df['query'] = self.user_df['query'].fillna('')
+                
+                # 预计算数值列的numpy数组
+                self.user_arrays = {
+                    'age': self.user_df['age'].to_numpy(dtype=np.int32),
+                    'gender': self.user_df['gender'].to_numpy(dtype=np.int32),
+                    'education': self.user_df['education'].to_numpy(dtype=np.int32)
+                }
+                
+                logger.info(f"成功加载用户查询数据，共 {len(self.user_df)} 条记录")
+                
+            except Exception as e:
+                logger.error(f"加载用户查询数据失败: {str(e)}")
+                raise
 
     def cleanup(self):
         """清理资源"""
@@ -114,7 +158,7 @@ class KeywordAnalyzer:
         return self.df.index.isin(indices)
 
     def set_progress_callback(self, callback):
-        """设置进度回调函数"""
+        """设置进度回���函数"""
         self.progress_callback = callback
 
     async def report_progress(self, stage: str, percent: int, message: str, details: dict = None):
@@ -266,7 +310,7 @@ class KeywordAnalyzer:
             return True
         
         results = []
-        # 只保留两个过滤条件：
+        # 只保留两个过滤件：
         # 1. 共现次数>=5
         # 2. 通过停用词等规则的有效性检查
         related_keywords = []
@@ -300,7 +344,7 @@ class KeywordAnalyzer:
         self._safe_print('预计算中介关键词搜索量...')
         related_volumes = {}
         total_keywords = len(related_keywords)
-        update_interval = max(1, int(total_keywords * 0.005))  # 每处理0.5%的数据更新一次
+        update_interval = max(1, int(total_keywords * 0.005))  # 每处理0.5%的数据新一次
         
         # 使用tqdm创建进度条，设置动态输出
         progress_bar = tqdm(
@@ -402,6 +446,128 @@ class KeywordAnalyzer:
         logger.info("搜索量计算完成")
         log_memory_usage()
         return results_df
+    
+    async def analyze_user_profiles(self, competitor_keywords):
+        """分析用户画像"""
+        logger.info("开始分析用户画像")
+        
+        try:
+            # 1. 先只用种子关键词匹配
+            logger.info(f"使用种子关键词 '{self.seed_keyword}' 匹配用户")
+            matched_users = self.user_df[
+                self.user_df['query'].str.contains(self.seed_keyword, na=False, case=False)
+            ]
+            
+            if len(matched_users) == 0:
+                # 2. 如果没有匹配到，再使用竞争关键词扩大范围
+                logger.info("种子关键词未匹配到用户，尝试使用竞争关键词")
+                competitor_keywords_list = [kw['竞争性关键词'] for kw in competitor_keywords]
+                logger.info(f"竞争关键词列表: {competitor_keywords_list[:10]}...")
+                
+                pattern = '|'.join([self.seed_keyword] + competitor_keywords_list)
+                matched_users = self.user_df[
+                    self.user_df['query'].str.contains(pattern, na=False, case=False)
+                ]
+            
+            if len(matched_users) == 0:
+                logger.warning("未找到匹配的用户数据")
+                return None, None
+            
+            logger.info(f"找到 {len(matched_users)} 个匹配用户")
+            
+            # 使用numpy进行统计计算
+            age_array = matched_users['age'].to_numpy()
+            gender_array = matched_users['gender'].to_numpy()
+            education_array = matched_users['education'].to_numpy()
+            
+            # 快速统计
+            total_users = len(matched_users)
+            age_dist = {i: int(np.sum(age_array == i)) for i in range(7)}
+            gender_dist = {i: int(np.sum(gender_array == i)) for i in range(3)}
+            education_dist = {i: int(np.sum(education_array == i)) for i in range(7)}
+            
+            # 计算平均值和比例（排除未知值0）
+            valid_ages = age_array[age_array != 0]
+            avg_age = float(np.mean(valid_ages)) if len(valid_ages) > 0 else 0
+            
+            valid_genders = gender_array[gender_array != 0]
+            total_known_gender = len(valid_genders)
+            male_ratio = (len(valid_genders[valid_genders == 1]) / total_known_gender * 100) if total_known_gender > 0 else 0
+            female_ratio = (len(valid_genders[valid_genders == 2]) / total_known_gender * 100) if total_known_gender > 0 else 0
+            
+            valid_education = education_array[education_array != 0]
+            avg_education = float(np.mean(valid_education)) if len(valid_education) > 0 else 0
+            
+            # 准备返回结果
+            profile_stats = {
+                'total_users': total_users,
+                'avg_age': round(avg_age, 2),
+                'male_ratio': round(male_ratio, 2),
+                'female_ratio': round(female_ratio, 2),
+                'avg_education': round(avg_education, 2)
+            }
+            
+            profile_dist = {
+                'age': {str(k): {'count': v, 'percentage': round(v/total_users*100, 2)} 
+                       for k, v in age_dist.items()},
+                'gender': {str(k): {'count': v, 'percentage': round(v/total_users*100, 2)} 
+                          for k, v in gender_dist.items()},
+                'education': {str(k): {'count': v, 'percentage': round(v/total_users*100, 2)} 
+                             for k, v in education_dist.items()}
+            }
+            
+            logger.info(f"用户画像分析完成: {profile_stats}")
+            
+            # 如果有数据库连接，保存结果
+            if self.db_conn and self.analysis_id:
+                try:
+                    cursor = self.db_conn.cursor()
+                    
+                    # 插入统计数据
+                    cursor.execute("""
+                        INSERT INTO user_profile_statistics 
+                        (seed_analysis_id, total_users, avg_age, male_ratio, female_ratio, avg_education)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                    """, (
+                        self.analysis_id,
+                        profile_stats['total_users'],
+                        profile_stats['avg_age'],
+                        profile_stats['male_ratio'],
+                        profile_stats['female_ratio'],
+                        profile_stats['avg_education']
+                    ))
+                    
+                    # 插入分布数据
+                    distribution_data = []
+                    for profile_type, dist in profile_dist.items():
+                        for category_value, stats in dist.items():
+                            distribution_data.append((
+                                self.analysis_id,
+                                profile_type,
+                                int(category_value),
+                                stats['count'],
+                                stats['percentage']
+                            ))
+                    
+                    cursor.executemany("""
+                        INSERT INTO user_profile_distribution 
+                        (seed_analysis_id, profile_type, category_value, user_count, percentage)
+                        VALUES (%s, %s, %s, %s, %s)
+                    """, distribution_data)
+                    
+                    self.db_conn.commit()
+                    logger.info("用户画像数据已保存到数据库")
+                    
+                except Exception as e:
+                    logger.error(f"保存用户画像数据时出错: {str(e)}")
+                    self.db_conn.rollback()
+                    raise
+            
+            return profile_stats, profile_dist
+            
+        except Exception as e:
+            logger.error(f"用户画像分析出错: {str(e)}")
+            return None, None
 
     async def find_competitors(self, mediator_df):
         """分析竞争关键词"""
@@ -542,6 +708,11 @@ class KeywordAnalyzer:
         self._save_competitor_results(all_competitors)
         logger.info("竞争关键词分析完成")
         log_memory_usage()
+        
+        # 在完成竞争关键词分析后，进行用户画像分析
+        profile_stats, profile_dist = await self.analyze_user_profiles(all_competitors)
+        
+        return all_competitors  # 返回竞争关键词结果
 
     def _save_search_volume_results(self, output_file, results_df):
         """保存搜索量结果"""

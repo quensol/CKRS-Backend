@@ -1,10 +1,12 @@
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from app.models.keyword import (
     SeedKeywordAnalysis,
     CooccurrenceKeyword,
     SearchVolumeAnalysis,
-    CompetitorKeyword
+    CompetitorKeyword,
+    UserProfileStatistics,
+    UserProfileDistribution
 )
 from app.schemas.keyword import (
     AnalysisCreate,
@@ -49,6 +51,16 @@ def get_analysis(db: Session, analysis_id: int) -> Optional[dict]:
         CompetitorKeyword.seed_analysis_id == analysis_id
     ).order_by(CompetitorKeyword.weighted_competition_score.desc()).all()
     
+    # 获取用户画像统计数据
+    profile_stats = db.query(UserProfileStatistics).filter(
+        UserProfileStatistics.seed_analysis_id == analysis_id
+    ).first()
+    
+    # 获取用户画像分布数据
+    profile_dist = db.query(UserProfileDistribution).filter(
+        UserProfileDistribution.seed_analysis_id == analysis_id
+    ).all()
+    
     # 构建完整的返回结果
     result = {
         "id": analysis.id,
@@ -60,7 +72,9 @@ def get_analysis(db: Session, analysis_id: int) -> Optional[dict]:
         "created_at": analysis.created_at,
         "cooccurrence_keywords": cooccurrence,
         "search_volumes": search_volumes,
-        "competitors": competitors
+        "competitors": competitors,
+        "user_profile_stats": profile_stats,
+        "user_profile_distribution": profile_dist
     }
     
     return result
@@ -99,4 +113,40 @@ def get_search_volume(db: Session, analysis_id: int) -> List[SearchVolumeAnalysi
     """获取搜索量分析数据"""
     return db.query(SearchVolumeAnalysis).filter(
         SearchVolumeAnalysis.seed_analysis_id == analysis_id
-    ).order_by(SearchVolumeAnalysis.weight.desc()).all() 
+    ).order_by(SearchVolumeAnalysis.weight.desc()).all()
+
+def get_user_profiles(db: Session, analysis_id: int) -> Optional[Dict[str, Any]]:
+    """获取用户画像数据"""
+    # 获取统计数据
+    stats = db.query(UserProfileStatistics).filter(
+        UserProfileStatistics.seed_analysis_id == analysis_id
+    ).first()
+    
+    # 获取分布数据
+    distribution = db.query(UserProfileDistribution).filter(
+        UserProfileDistribution.seed_analysis_id == analysis_id
+    ).all()
+    
+    if not stats:
+        return None
+        
+    return {
+        "stats": {
+            "total_users": stats.total_users,
+            "avg_age": float(stats.avg_age),
+            "male_ratio": float(stats.male_ratio),
+            "female_ratio": float(stats.female_ratio),
+            "avg_education": float(stats.avg_education),
+            "created_at": stats.created_at
+        },
+        "distribution": [
+            {
+                "profile_type": dist.profile_type,
+                "category_value": dist.category_value,
+                "user_count": dist.user_count,
+                "percentage": float(dist.percentage),
+                "created_at": dist.created_at
+            }
+            for dist in distribution
+        ]
+    } 
