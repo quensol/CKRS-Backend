@@ -671,3 +671,257 @@ class GPTService:
         except Exception as e:
             logger.error(f"市场洞察分析失败: {str(e)}")
             return f"市场洞察生成失败: {str(e)}"
+        
+    # 构建用户画像数据的可读性描述
+    def _convert_user_profile(self, demographics, distribution_data):
+        """转换用户画像数据为可读性描述"""
+        profile_text = []
+        
+        # 1. 用户规模
+        profile_text.append(f"用户总数：{demographics['total_users']}人")
+        
+        # 2. 年龄分布分析
+        age_mapping = {
+            "0": "未知年龄",
+            "1": "0-18岁",
+            "2": "19-23岁",
+            "3": "24-30岁",
+            "4": "31-40岁",
+            "5": "41-50岁",
+            "6": "51岁以上"
+        }
+        
+        age_dist = distribution_data['age']
+        # 找出占比最高的年龄段
+        top_ages = sorted(
+            [(k, v['percentage']) for k, v in age_dist.items() if k != '0'],
+            key=lambda x: x[1],
+            reverse=True
+        )[:2]
+        
+        age_text = f"年龄分布：主要集中在{age_mapping[top_ages[0][0]]}({top_ages[0][1]:.1f}%)和{age_mapping[top_ages[1][0]]}({top_ages[1][1]:.1f}%)年龄段"
+        profile_text.append(age_text)
+        
+        # 3. 性别比例分析
+        gender_text = f"性别比例：男性{demographics['male_ratio']:.1f}%，女性{demographics['female_ratio']:.1f}%"
+        profile_text.append(gender_text)
+        
+        # 4. 教育程度分析
+        edu_mapping = {
+            "0": "未知学历",
+            "1": "博士",
+            "2": "硕士",
+            "3": "大学生",
+            "4": "高中",
+            "5": "初中",
+            "6": "小学"
+        }
+        
+        edu_dist = distribution_data['education']
+        # 找出占比最高的教育程度
+        top_edu = sorted(
+            [(k, v['percentage']) for k, v in edu_dist.items() if k != '0'],
+            key=lambda x: x[1],
+            reverse=True
+        )[0]
+        
+        edu_text = f"教育程度：以{edu_mapping[top_edu[0]]}为主({top_edu[1]:.1f}%)，平均教育水平{demographics['avg_education']:.1f}"
+        profile_text.append(edu_text)
+        
+        return "\n".join(profile_text)
+
+    async def integrated_analysis(
+        self,
+        analysis_id: int,
+        seed_keyword: str,
+        search_volumes: List[Any],
+        competitors: List[Any],
+        profile_stats: Any,
+        profile_dist: List[Any],
+        db: Session
+    ) -> str:
+        """执行统合分析"""
+        try:
+            logger.info(f"开始统合分析 ID: {analysis_id}")
+            
+            # 简化搜索关键词列表，只包含关键词和归一化权重
+            search_keywords = [
+                {
+                    "keyword": sv.mediator_keyword,
+                    "weight": float(sv.weight)  # 已经是归一化的权重
+                }
+                for sv in search_volumes
+            ]
+            
+            # 简化竞争关键词列表，只包含关键词和归一化竞争度
+            competitor_keywords = [
+                {
+                    "keyword": comp.competitor_keyword,
+                    "competition": float(comp.weighted_competition_score)  # 已经是归一化的竞争度
+                }
+                for comp in competitors
+            ]
+            
+            # 构建用户画像数据（保持不变因为这部分数据对分析很重要）
+            demographics = None
+            if profile_stats:
+                demographics = {
+                    'total_users': profile_stats.total_users,
+                    'avg_age': float(profile_stats.avg_age),
+                    'male_ratio': float(profile_stats.male_ratio),
+                    'female_ratio': float(profile_stats.female_ratio),
+                    'avg_education': float(profile_stats.avg_education)
+                }
+            
+            distribution_data = {
+                'age': {},
+                'gender': {},
+                'education': {}
+            }
+            
+            for dist in profile_dist:
+                distribution_data[dist.profile_type][str(dist.category_value)] = {
+                    'count': dist.user_count,
+                    'percentage': float(dist.percentage)
+                }
+            
+            # 转换用户画像数据为可读性描述
+            user_profile_text = self._convert_user_profile(demographics, distribution_data)
+            
+            # 构建系统提示词
+            system_prompt = """你是一个资深的市场分析专家，拥有丰富的数据分析、用户研究和竞争策略经验。你的专业领域包括：
+1. 搜索意图分析：精通用户搜索行为分析，能准确识别和分类用户意图
+2. 竞争格局分析：深入理解市场竞争态势，擅长识别竞争优势和市场机会
+3. 用户画像研究：专业的用户行为分析能力，善于解读人口统计学特征
+4. 市场策略规划：具备战略思维，能提供实用的营销策略和发展建议
+
+在进行分析时，你应该：
+1. 数据导向：始终基于提供的具体数据进行分析，避免主观臆测
+2. 逻辑严谨：分析过程需要层次分明，论据充分，结论明确
+3. 洞察深入：不止于表面数据，深入挖掘背后的用户需求和市场机会
+4. 建议可行：所有建议都应该具体、可执行，并考虑实际操作难度
+5. 重点突出：优先关注最具价值的发现，对关键问题提供重点分析
+
+你的分析结果应该：
+1. 结构清晰：使用明确的标题和层次，便于阅读和理解
+2. 数据支撑：关键结论都要有相应的数据支持
+3. 观点明确：对重要发现和建议要有清晰的表述
+4. 实用性强：确保建议具有实际的参考和指导价值"""
+
+            # 构建用户提示词
+            prompt = f"""作为一个资深的市场分析专家，请基于以下数据进行深度的市场分析和洞察。
+
+分析对象关键词：{seed_keyword}
+
+1. 与{seed_keyword}共现的搜索关键词数据（按权重排序，展示前100个，可能包含无关词）：
+{json.dumps(search_keywords, ensure_ascii=False, indent=2)}
+
+请对这些关键词进行筛选和分类，首先剔除以下无关词：
+- 通用词和语气词（如："的"、"了"、"什么"等）
+- 无意义的修饰词（如："最好"、"推荐"等）
+- 时间词（如："今天"、"明天"等）
+- 数量词和单位词（如："个"、"件"、"元"等）
+
+然后将有效词语分类为：
+- 品牌词：各类品牌名称、品牌系列
+- 属性词：产品特征、规格参数
+- 功能词：核心功能、技术特点
+- 场景词：使用场景、适用环境
+- 需求词：用户痛点、目标诉求
+- 其他词：重要但不属于上述类别的词语
+
+2. 与{seed_keyword}相关的竞争关键词数据（按竞争度排序，展示前50个，可能包含无关词）：
+{json.dumps(competitor_keywords, ensure_ascii=False, indent=2)}
+
+请对这些竞争词进行筛选和分类，首先剔除：
+- 与竞争无关的通用词
+- 无意义的描述词
+- 纯功能或属性词
+
+然后将有效竞争词分类为：
+- 直接竞品：直接竞争的同类产品
+- 替代品：可能替代的其他产品
+- 相关品：相关但不直接竞争的产品
+- 竞争场景：体现竞争关系的场景
+- 其他：其他重要的竞争关系词
+
+3. 用户画像数据：
+{user_profile_text}
+
+请提供以下方面的深度分析：
+
+1. 关键词分析
+   - 重要品牌识别和分析
+   - 核心属性和功能特征
+   - 主要使用场景
+   - 关键用户需求
+
+2. 竞争格局分析
+   - 主要竞争对手
+   - 市场竞争态势
+   - 竞争优势和劣势
+   - 潜在市场机会
+
+3. 用户画像解读
+   - 核心用户群体特征
+   - 用户行为偏好
+   - 消费能力评估
+   - 需求特点分析
+
+4. 市场策略建议
+   - 产品定位优化
+   - 目标用户选择
+   - 营销渠道建议
+   - 竞争策略制定
+   - 产品发展方向
+
+请以结构化的方式输出分析结果，注重数据支撑，提供具体可行的建议。"""
+
+            # 打印完整的提示词用于调试
+            print("\n" + "="*50)
+            print("统合分析 - 系统提示词:")
+            print("="*50)
+            print(system_prompt)
+            print("\n" + "="*50)
+            print("统合分析 - 用户提示词:")
+            print("="*50)
+            print(prompt)
+            print("="*50 + "\n")
+            
+            # 记录到日志文件
+            logger.debug("Integrated Analysis - System Prompt:\n%s", system_prompt)
+            logger.debug("Integrated Analysis - User Prompt:\n%s", prompt)
+
+            # 调用GPT API
+            logger.info("调用GPT API进行统合分析...")
+            
+            # 调用GPT API
+            response = await self.client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": system_prompt
+                    },
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7,
+                max_tokens=4000
+            )
+            
+            insights = response.choices[0].message.content
+            
+            # 保存分析结果
+            market_insight = models.MarketInsight(
+                seed_analysis_id=analysis_id,
+                content=insights
+            )
+            db.add(market_insight)
+            db.commit()
+            
+            logger.info(f"统合分析完成 ID: {analysis_id}")
+            return insights
+            
+        except Exception as e:
+            logger.error(f"统合分析失败: {str(e)}")
+            raise
