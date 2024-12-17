@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DECIMAL, TIMESTAMP, BigInteger, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, DECIMAL, TIMESTAMP, BigInteger, ForeignKey, Text, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.core.database import Base
@@ -104,3 +104,18 @@ class MarketInsight(Base):
     
     # 添加关系
     analysis = relationship("SeedKeywordAnalysis", back_populates="market_insight")
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    email = Column(String(100), unique=True, nullable=False)
+    password = Column(String(100), nullable=False)
+    phone = Column(String(20), nullable=False)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+    last_login = Column(TIMESTAMP, nullable=True)
+
+    __table_args__ = (
+        Index('idx_email', 'email'),
+        Index('idx_phone', 'phone'),
+    )

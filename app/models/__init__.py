@@ -5,7 +5,8 @@ from app.models.keyword import (
     CompetitorKeyword,
     UserProfileStatistics,
     UserProfileDistribution,
-    MarketInsight
+    MarketInsight,
+    User
 )
 from app.models.filtered_keywords import (
     FilteredSearchVolumeAnalysis,
@@ -25,5 +26,6 @@ __all__ = [
     "CompetitorCategoryMapping",
     "UserProfileStatistics",
     "UserProfileDistribution",
-    "MarketInsight"
+    "MarketInsight",
+    "User"
 ] 

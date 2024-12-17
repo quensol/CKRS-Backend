@@ -236,3 +236,20 @@ CREATE TABLE market_insights (
     -- 添加索引
     INDEX idx_seed_analysis_id (seed_analysis_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='市场洞察结果表'; 
+
+-- 用户表
+CREATE TABLE users (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    email VARCHAR(100) NOT NULL UNIQUE COMMENT '邮箱(账户)',
+    password VARCHAR(100) NOT NULL COMMENT '密码(加密存储)',
+    phone VARCHAR(20) NOT NULL COMMENT '手机号码',
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_login TIMESTAMP NULL COMMENT '最后登录时间',
+    INDEX idx_email (email),
+    INDEX idx_phone (phone)
+) COMMENT='用户表';
+
+-- 修改种子关键词分析记录表,添加用户ID外键
+ALTER TABLE seed_keyword_analysis 
+ADD COLUMN user_id BIGINT NULL COMMENT '创建用户ID' AFTER id,
+ADD FOREIGN KEY (user_id) REFERENCES users(id); 
